@@ -34,7 +34,8 @@ ROUND_COL = "round"
 TIME_COL = "timestamp"
 CLUB_COL = "club"
 PRICE_COL = "price"
-POSITION_COL = "position_id"
+POSITION_COL = "position"
+POSITION_ID_COL = "position_id"
 
 # Base Model
 MODEL = lgbm.LGBMRanker()
@@ -46,7 +47,7 @@ def fit(model, X, y, q):
         X,
         y.clip(0, 30).round(0).astype("int32"),
         group=q,
-        categorical_feature=[POSITION_COL],
+        categorical_feature=[POSITION_ID_COL],
     )
 
 
@@ -77,6 +78,8 @@ class Objective:
     q_test: pd.Series
 
     def __call__(self, trial: optuna.Trial):
+        params = {}
+        MODEL.set_params(**params)
         fit(MODEL, self.X_train, self.y_train, self.q_train)
         return score(MODEL, self.X_test, self.y_test, self.q_test)
 
@@ -129,28 +132,46 @@ def draft(data, max_players_per_club, dropout):
     return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
 
 
-def main(n_trials, timeout, max_players_per_club, dropout, n_times):
+def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     """Main exec."""
+    # Read data
     with open(QUERY, encoding="utf-8") as file:
         data = pd.read_gbq(file.read())
 
-    to_drop = [TARGET_COL, SEASON_COL, ROUND_COL, CLUB_COL, PRICE_COL]
-    groups = data["round"] + 38 * (data["season"] - data["season"].min())
+    # These are the columns that will only be used for the drafting simulation.
+    # They must be removed from training data.
+    draft_cols = [TARGET_COL, SEASON_COL, ROUND_COL, CLUB_COL, POSITION_COL, PRICE_COL]
+
+    # This is a ranking model. It needs to know the groups in order to learn.
+    # Groups are expected to be a list of group sizes.
+    # This implies that the dataset must be ordered as the groups are together.
+    data = data.sort_values(["season", "round"])
+    groups = data["round"] + 38 * (data["season"] - data["season"].min())  # Group ID
     groups = groups.astype("int32")
 
+    # Data points where data will be splitted.
     split = [
-        groups.max() - (3 * 38),
-        groups.max() - (2 * 38),
-        groups.max() - (1 * 38),
-        groups.max() - (0 * 38),
+        groups.max() - (3 * 38),  # Traning start.
+        groups.max() - (2 * 38),  # Training end and validation start.
+        groups.max() - (1 * 38),  # Validation end and testing start.
+        groups.max() - (0 * 38),  # Testing end.
     ]
 
+    # Split data
     train_index = data[(groups >= split[0]) & (groups < split[1])].index
     valid_index = data[(groups >= split[1]) & (groups < split[2])].index
     test_index = data[(groups >= split[2]) & (groups < split[3])].index
 
-    X = data.drop(columns=to_drop).astype("float32").astype({POSITION_COL: "int32"})
+    # Split features and target.
+    X = (
+        data.drop(columns=draft_cols)
+        .astype("float32")
+        .astype({POSITION_ID_COL: "int32"})
+    )
     y = data[TARGET_COL]
+
+    # Split each dataset into features and targets.
+    # Notice that sorting is False on the groups, because it must keep original order.
 
     X_train = X.loc[train_index]
     y_train = y.loc[train_index]
@@ -164,12 +185,14 @@ def main(n_trials, timeout, max_players_per_club, dropout, n_times):
     y_test = y.loc[test_index]
     q_test = groups.loc[test_index].value_counts(sort=False)
 
+    # Hyperparams tuning with optuna.
     obj = Objective(X_train, y_train, q_train, X_valid, y_valid, q_valid)
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
     valid_score = study.best_value
     print(f"{valid_score=}")
 
+    # Apply best params and retrain to score agains test set.
     MODEL.set_params(**study.best_params)
     fit(
         MODEL,
@@ -180,13 +203,16 @@ def main(n_trials, timeout, max_players_per_club, dropout, n_times):
     test_score = score(MODEL, X_test, y_test, q_test)
     print(f"{test_score=}")
 
-    mean_points = []
-    max_points = []
-    draft_history = []
-    for i, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
+    # Drafting Simulation.
+    # Test the model in a real-life drafting scenario on the test set.
+    # It will iterate round by round from the test set
+    # simulating how would be the scoring of a team drafted using this model.
 
+    history = []
+    for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
+
+        # Data fot this specifc round.
         rnd[f"{TARGET_COL}_pred"] = MODEL.predict(X.loc[rnd.index])
-
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
@@ -197,43 +223,31 @@ def main(n_trials, timeout, max_players_per_club, dropout, n_times):
         }
         rnd = rnd.reset_index().rename(mapping, axis=1)[list(mapping.values())]
 
-        def run_draft():
-            """Wrapper to handle error on draft()."""
-            try:
-                return draft(data, max_players_per_club, dropout)
-            except ValueError as err:
-                if "There are not enough players to form a line-up" in str(err):
-                    return draft(data, max_players_per_club, dropout)
-                raise err
-
+        # Make several concurrent calls agains the Draft API
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(executor.submit(run_draft))
+                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout))
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
-                name=i,
+                name=idx,
             )
 
-        data["points"] = data["actual_points"]
-        the_best = draft(data, 5, 0.0)
-        # the_popular = ...
+        # Test again, but for a perfect scenario. Instead of using predictions
+        # use the actual points to see how a perfect model would be.
+        rnd["points"] = rnd["actual_points"]
+        draft_scores["max"] = draft(rnd, 5, 0.0)
 
-        mean_draft = np.mean(draft_scores)
-        mean_draft_norm = mean_draft / the_best
+        # Evaluate how much points the most frequent team would score.
+        # draft_scores["mode"] = ... TODO
 
-        logging.info("Mean Draft: %.1f (%.2f)", mean_draft, mean_draft_norm)
-        logging.info("%s", 40 * "-")
+        history.append(draft_scores)
 
-        draft_scores["max"] = the_best
-        draft_history.append(draft_scores)
-        mean_points.append(mean_draft_norm)
+    overall_mean_score = draft_scores.drop(columns=["max"]).mean()  # TODO include mode
+    logging.info("Overall Mean Draft: %.2f", overall_mean_score)
 
-    overall_mean_points = np.mean(mean_points)
-
-    logging.info("Overall Mean Draft: %.2f", overall_mean_points)
-
+    # Retrain model on all datasets and export it.
     fit(
         MODEL,
         pd.concat((X_train, X_valid, X_test)),
@@ -257,7 +271,7 @@ if __name__ == "__main__":
     main(
         n_trials=args.n_trials,
         timeout=args.timeout,
-        max_players_per_club=args.max_players_per_club,
+        max_plyrs_per_club=args.max_players_per_club,
         dropout=args.dropout,
         n_times=args.n_times,
     )
