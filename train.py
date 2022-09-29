@@ -233,7 +233,6 @@ def main(n_trials, timeout, max_players_per_club, dropout, n_times):
     overall_mean_points = np.mean(mean_points)
 
     logging.info("Overall Mean Draft: %.2f", overall_mean_points)
-    logging.info("Overall Max Draft: %.2f", overall_max_points)
 
     fit(
         MODEL,
