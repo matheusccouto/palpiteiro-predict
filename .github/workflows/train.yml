@@ -3,27 +3,25 @@ name: Train Model
 on:
   workflow_call:
     inputs:
+      environment:
+        required: true
+        type: string
       n_trials:
         required: false
-        default: "100"
         type: string
       timeout:
         required: false
-        default: "60"
         type: string
       max_players_per_club:
         required: false
-        default: "5"
         type: string
       dropout:
         required: false
-        default: "0"
         type: string
       n_times:
         required: false
-        default: "0"
         type: string
-  workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
