@@ -1,7 +1,7 @@
 name: Train Model
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       n_trials:
         required: true
