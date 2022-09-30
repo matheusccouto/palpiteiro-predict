@@ -23,6 +23,28 @@ on:
         required: true
         default: "0"
         type: string
+  workflow_dispatch:
+    inputs:
+      n_trials:
+        required: true
+        default: "100"
+        type: string
+      timeout:
+        required: true
+        default: "60"
+        type: string
+      max_players_per_club:
+        required: true
+        default: "5"
+        type: string
+      dropout:
+        required: true
+        default: "0"
+        type: string
+      n_times:
+        required: true
+        default: "0"
+        type: string
 jobs:
   deploy:
     runs-on: ubuntu-latest
