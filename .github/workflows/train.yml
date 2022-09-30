@@ -1,10 +1,6 @@
 name: Train Model
 
 on:
-  push:
-    branches:
-      - main
-      - dev
   workflow_call:
     inputs:
       n_trials:
