@@ -5,6 +5,8 @@ import concurrent.futures
 import json
 import logging
 import os
+import sys
+import warnings
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -15,15 +17,22 @@ import pandas as pd
 import requests
 from sklearn.metrics import ndcg_score
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname).1s %(asctime)s] %(message)s",
+    handlers=[logging.StreamHandler(stream=sys.stdout)],
+)
+warnings.simplefilter("ignore")
+
 # Paths
 THIS_DIR = os.path.dirname(__file__)
 QUERY = os.path.join(THIS_DIR, "query.sql")
 
 # Default Args
 MAX_PLYRS_P_CLUB = 5
-DROPOUT = 0.333
-N_TIMES = 5
-N_TRIALS = 1
+DROPOUT = 0.0
+N_TIMES = 1
+N_TRIALS = 100
 TIMEOUT = None
 
 # Columns
@@ -38,7 +47,7 @@ POSITION_COL = "position"
 POSITION_ID_COL = "position_id"
 
 # Base Model
-MODEL = lgbm.LGBMRanker()
+MODEL = lgbm.LGBMRanker(n_estimators=100, n_jobs=-1)
 
 
 def fit(model, X, y, q):
@@ -78,7 +87,21 @@ class Objective:
     q_test: pd.Series
 
     def __call__(self, trial: optuna.Trial):
-        params = {}
+        params = dict(
+            boosting_type=trial.suggest_categorical("boosting_type", ["gbdt", "dart", "goss"]),
+            num_leaves=trial.suggest_int("num_leaves", 2, 1024),
+            max_depth=trial.suggest_int("max_depth", 2, 128),
+            learning_rate=trial.suggest_float("learning_rate", 1e-3, 1e0, log=True),
+            # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
+            # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
+            min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
+            min_child_samples=trial.suggest_int("min_child_samples", 1, 16),
+            subsample=trial.suggest_float("subsample", 0.5, 1.0),
+            # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 1e0, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 1e0, log=True),
+        )
         MODEL.set_params(**params)
         fit(MODEL, self.X_train, self.y_train, self.q_train)
         return score(MODEL, self.X_test, self.y_test, self.q_test)
@@ -190,7 +213,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
     valid_score = study.best_value
-    print(f"{valid_score=}")
+
+    logging.info("validation scoring: %.3f", valid_score)
 
     # Apply best params and retrain to score agains test set.
     MODEL.set_params(**study.best_params)
@@ -201,7 +225,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         pd.concat((q_train, q_valid)),
     )
     test_score = score(MODEL, X_test, y_test, q_test)
-    print(f"{test_score=}")
+    logging.info("testing scoring: %.3f", test_score)
 
     # Drafting Simulation.
     # Test the model in a real-life drafting scenario on the test set.
@@ -233,6 +257,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
                 index=[f"run{i}" for i in range(len(futures))],
                 name=idx,
             )
+        
+        logging.info("%04d-%02d: %.1f", idx[0], idx[1], draft_scores.mean())
 
         # Test again, but for a perfect scenario. Instead of using predictions
         # use the actual points to see how a perfect model would be.
@@ -244,8 +270,15 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
 
         history.append(draft_scores)
 
-    overall_mean_score = draft_scores.drop(columns=["max"]).mean()  # TODO include mode
+    history = pd.concat(history, axis=1).transpose()
+
+    # TODO include mode
+    
+    overall_mean_score = history.drop(columns=["max"]).mean().mean()  
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
+    
+    overall_mean_norm_score = history.drop(columns=["max"]).divide(history["max"], axis=0).mean().mean()
+    logging.info("Overall Mean Normalized Draft: %.2f", overall_mean_norm_score)
 
     # Retrain model on all datasets and export it.
     fit(
