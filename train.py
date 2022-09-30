@@ -88,7 +88,9 @@ class Objective:
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
-            boosting_type=trial.suggest_categorical("boosting_type", ["gbdt", "dart", "goss"]),
+            boosting_type=trial.suggest_categorical(
+                "boosting_type", ["gbdt", "dart", "goss"]
+            ),
             num_leaves=trial.suggest_int("num_leaves", 2, 1024),
             max_depth=trial.suggest_int("max_depth", 2, 128),
             learning_rate=trial.suggest_float("learning_rate", 1e-3, 1e0, log=True),
@@ -257,7 +259,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
                 index=[f"run{i}" for i in range(len(futures))],
                 name=idx,
             )
-        
+
         logging.info("%04d-%02d: %.1f", idx[0], idx[1], draft_scores.mean())
 
         # Test again, but for a perfect scenario. Instead of using predictions
@@ -273,11 +275,13 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     history = pd.concat(history, axis=1).transpose()
 
     # TODO include mode
-    
-    overall_mean_score = history.drop(columns=["max"]).mean().mean()  
+
+    overall_mean_score = history.drop(columns=["max"]).mean().mean()
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
-    
-    overall_mean_norm_score = history.drop(columns=["max"]).divide(history["max"], axis=0).mean().mean()
+
+    overall_mean_norm_score = (
+        history.drop(columns=["max"]).divide(history["max"], axis=0).mean().mean()
+    )
     logging.info("Overall Mean Normalized Draft: %.2f", overall_mean_norm_score)
 
     # Retrain model on all datasets and export it.
