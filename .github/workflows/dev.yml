@@ -1,4 +1,4 @@
-name: dev
+name: Dev
 on:
   push:
     branches:
@@ -7,6 +7,11 @@ on:
 jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+    secrets: inherit
+  train:
+    uses: ./.github/workflows/train.yml
     with:
       environment: dev
     secrets: inherit
