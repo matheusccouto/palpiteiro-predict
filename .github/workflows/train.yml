@@ -49,12 +49,7 @@ jobs:
 
       - name: Retrain
         run: |
-          python train.py \
-          --n-trials {{ inputs.n_trials }} \
-          --timeout {{ inputs.timeout}} \
-          --max-players-per-club {{ inputs.max_players_per_club }} \
-          --dropout {{ inputs.dropout }} \
-          --n-times {{ inputs.n_times }}
+          python train.py --n-trials {{ inputs.n_trials }}
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
