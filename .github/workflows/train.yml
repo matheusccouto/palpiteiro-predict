@@ -9,9 +9,6 @@ on:
       n_trials:
         required: false
         type: string
-      timeout:
-        required: false
-        type: string
       max_players_per_club:
         required: false
         type: string
@@ -51,7 +48,6 @@ jobs:
         run: |
           python train.py \
           --n-trials ${{ inputs.n_trials }} \
-          --timeout ${{ inputs.timeout}} \
           --max-players-per-club ${{ inputs.max_players_per_club }} \
           --dropout ${{ inputs.dropout }} \
           --n-times ${{ inputs.n_times }}

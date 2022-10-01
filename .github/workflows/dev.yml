@@ -16,7 +16,6 @@ jobs:
     with:
       environment: dev
       n_trials: 100
-      timeout: null
       max_players_per_club: 5
       dropout: 0.0
       n_times: 1
