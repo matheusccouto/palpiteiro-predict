@@ -29,4 +29,4 @@ jobs:
           memory_mb: 512
           entry_point: handler
           region: us-east4
-          env_vars: "BUCKET_NAME=${{ secrets.BUCKET_NAME }}"
+          env_vars: BUCKET_NAME=${{ secrets.BUCKET_NAME }}
