@@ -23,3 +23,9 @@ def request_fixture():
 def test_count(req):
     """Test function handler."""
     assert len(main.handler(req)["replies"]) == 7
+
+
+def test_is_serializable(req):
+    """Make sure that the results is serializable."""
+    result = main.handler(req)
+    assert json.dumps(result)
