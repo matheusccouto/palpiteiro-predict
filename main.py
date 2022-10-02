@@ -1,7 +1,6 @@
 """Google Cloud Functions to predict player points."""
 
 import json
-import logging
 import os
 
 import lightgbm as lgbm
@@ -29,7 +28,7 @@ def handler(request):
         json.dumps(
             dict(
                 severity="INFO",
-                message=body
+                message=json.dumps(body)
             )
         )
     )
