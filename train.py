@@ -24,6 +24,8 @@ logging.basicConfig(
 )
 warnings.simplefilter("ignore")
 
+# pylint: disable=invalid-name
+
 # Paths
 THIS_DIR = os.path.dirname(__file__)
 QUERY = os.path.join(THIS_DIR, "query.sql")
@@ -159,6 +161,8 @@ def draft(data, max_players_per_club, dropout):
 
 def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     """Main exec."""
+    # pylint: disable=too-many-locals
+
     # Read data
     with open(QUERY, encoding="utf-8") as file:
         data = pd.read_gbq(file.read())
@@ -273,8 +277,6 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         history.append(draft_scores)
 
     history = pd.concat(history, axis=1).transpose()
-
-    # TODO include mode
 
     overall_mean_score = history.drop(columns=["max"]).mean().mean()
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
