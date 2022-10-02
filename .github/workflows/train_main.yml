@@ -9,7 +9,7 @@ on:
       - query.sql
       - requirements-train.txt
       - .github/workflows/train.yml
-      - .github/workflows/train_dev.yml
+      - .github/workflows/train_main.yml
 
   schedule:
     - cron:  '0 0 * * *'

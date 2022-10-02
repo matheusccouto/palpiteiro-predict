@@ -3,7 +3,7 @@ name: Train Dev
 on:
   push:
     branches:
-      - main
+      - dev
     paths:
       - train.py
       - query.sql
