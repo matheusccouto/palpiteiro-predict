@@ -1,6 +1,6 @@
 """Google Cloud Functions to predict player points."""
 
-import json
+import logging
 import os
 
 import lightgbm as lgbm
@@ -24,6 +24,7 @@ features = model.feature_name()
 def handler(request):
     """HTTP Cloud Function handler."""
     body = request.get_json()
+    logging.info("body: %s", body)
     data = pd.DataFrame.from_records(body["calls"])[features].astype("float32")
     pred = model.predict(data, validate_features=True)
     return {"replies": pred}

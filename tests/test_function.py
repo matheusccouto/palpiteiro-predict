@@ -1,5 +1,6 @@
 """Unit tests for google cloud function."""
 
+import json
 import os
 from unittest.mock import Mock
 
@@ -15,7 +16,7 @@ SAMPLE_PATH = os.path.join(THIS_DIR, "sample.csv")
 @pytest.fixture(name="req")
 def request_fixture():
     """Sample data for testing."""
-    body = {"calls": pd.read_csv(SAMPLE_PATH).values.tolist()}
+    body = {"calls": pd.read_csv(SAMPLE_PATH)["column_name"].apply(json.loads).tolist()}
     return Mock(get_json=Mock(return_value=body))
 
 
