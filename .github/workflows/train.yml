@@ -1,32 +1,23 @@
 name: Train
 
 on:
-  workflow_call:
-    inputs:
-      environment:
-        required: true
-        type: string
-      n_trials:
-        required: false
-        default: 100
-        type: string
-      max_players_per_club:
-        required: false
-        default: 5
-        type: string
-      dropout:
-        required: false
-        default: 0.0
-        type: string
-      n_times:
-        required: false
-        default: 1
-        type: string
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - train.py
+      - query.sql
+      - requirements-train.txt
+      - .github/workflows/train.yml
+
+  schedule:
+    - cron:  '0 0 * * *'
 
 jobs:
   train:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ github.REF_NAME }}
 
     steps:
       - name: Checkout repo
@@ -40,10 +31,10 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v0
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v3
         with:
-          python-version: "3.9"
+          python-version: 3.9
 
       - name: Install requirements
         run: pip install -r requirements-train.txt
@@ -51,10 +42,10 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials ${{ inputs.n_trials }} \
-          --max-players-per-club ${{ inputs.max_players_per_club }} \
-          --dropout ${{ inputs.dropout }} \
-          --n-times ${{ inputs.n_times }}
+          --n-trials 100 \
+          --max-players-per-club 5 \
+          --dropout 0.0 \
+          --n-times 1
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}

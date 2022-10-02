@@ -1,0 +1,37 @@
+name: Testing
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  
+jobs:
+  testing:
+    runs-on: ubuntu-latest
+    environment: ${{ github.BASE_REF }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v0
+        with:
+          credentials_json: ${{ secrets.GCP_KEYFILE }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.9
+
+      - name: Install requirements
+        run: |
+          pip install --upgrade pip wheel
+          pip install pytest-cov -r requirements.txt
+
+      - name: Test
+        run: pytest --cov=./ --cov-report=xml --log-cli-level=INFO
+
+      - name: Code coverage
+        uses: codecov/codecov-action@v3
