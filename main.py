@@ -24,7 +24,6 @@ features = model.feature_name()
 def handler(request):
     """HTTP Cloud Function handler."""
     body = request.get_json()
-    records = [json.loads(row[0]) for row in body["calls"]]
-    data = pd.DataFrame.from_records(records)[features].astype("float32")
+    data = pd.DataFrame.from_records(body["calls"])[features].astype("float32")
     pred = model.predict(data, validate_features=True)
     return {"replies": pred}
