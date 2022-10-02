@@ -28,7 +28,7 @@ jobs:
       - name: Install requirements
         run: |
           pip install --upgrade pip wheel
-          pip install pytest-cov -r requirements.txt
+          pip install pytest-cov -r requirements.txt -r requirements-test.txt
 
       - name: Test
         run: pytest --cov=./ --cov-report=xml --log-cli-level=INFO
