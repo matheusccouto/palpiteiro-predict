@@ -23,7 +23,7 @@ jobs:
       - name: Install requirements
         run: |
           pip install --upgrade pip wheel
-          pip install pylint -r requirements.txt -r requirements-train.txt
+          pip install pylint -r requirements.txt -r requirements-train.txt -r requirements-test.txt
 
       - name: Lint
         run: pylint main.py train.py tests
