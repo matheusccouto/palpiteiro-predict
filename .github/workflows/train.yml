@@ -44,7 +44,7 @@ jobs:
       - name: Install requirements
         run: pip install -r requirements-train.txt
 
-      - name: Retrain
+      - name: Train
         run: |
           python train.py \
           --n-trials ${{ inputs.n_trials }} \
