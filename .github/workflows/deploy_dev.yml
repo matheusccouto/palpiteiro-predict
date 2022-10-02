@@ -1,4 +1,4 @@
-name: Dev
+name: Deploy Dev
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     paths:
       - main.py
       - requirements.txt
-      - deploy.txt
-      - deploy_dev.txt
+      - .github/workflows/deploy.yml
+      - .github/workflows/deploy_dev.yml
 
 jobs:
   deploy:
