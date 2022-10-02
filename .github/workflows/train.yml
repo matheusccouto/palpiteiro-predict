@@ -8,15 +8,19 @@ on:
         type: string
       n_trials:
         required: false
+        default: 100
         type: string
       max_players_per_club:
         required: false
+        default: 5
         type: string
       dropout:
         required: false
+        default: 0.0
         type: string
       n_times:
         required: false
+        default: 1
         type: string
 
 jobs:

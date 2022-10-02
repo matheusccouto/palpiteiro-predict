@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - main.py
+      - requirements.txt
+      - deploy.txt
+      - deploy_main.txt
 
 jobs:
   deploy:

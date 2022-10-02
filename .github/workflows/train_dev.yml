@@ -1,8 +1,19 @@
 name: Train Dev
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - train.py
+      - query.sql
+      - requirements-train.txt
+      - .github/workflows/train.yml
+      - .github/workflows/train_dev.yml
+
   schedule:
     - cron:  '0 0 * * 3'
+
   workflow_dispatch:
     inputs:
       n_trials:
