@@ -24,7 +24,7 @@ on:
         type: string
 
 jobs:
-  deploy:
+  train:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
 
