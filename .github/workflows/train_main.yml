@@ -1,0 +1,28 @@
+name: Train Main
+
+on:
+  workflow_dispatch:
+    inputs:
+      n_trials:
+        required: false
+        type: string
+      max_players_per_club:
+        required: false
+        type: string
+      dropout:
+        required: false
+        type: string
+      n_times:
+        required: false
+        type: string
+
+jobs:
+  train:
+    uses: ./.github/workflows/train.yml
+    with:
+      environment: main
+      n_trials: 100
+      max_players_per_club: 5
+      dropout: 0.0
+      n_times: 1
+    secrets: inherit

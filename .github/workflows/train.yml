@@ -1,4 +1,4 @@
-name: Train Model
+name: Train
 
 on:
   workflow_call:
