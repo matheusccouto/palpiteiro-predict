@@ -29,7 +29,7 @@ jobs:
         with:
           name: points
           runtime: python39
-          memory_mb: 512
+          memory_mb: 256
           entry_point: handler
           region: us-east4
           env_vars: BUCKET_NAME=${{ secrets.BUCKET_NAME }}
