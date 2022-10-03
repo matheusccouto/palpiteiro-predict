@@ -46,4 +46,5 @@ SELECT
 FROM
     palpiteiro.fct_player
 WHERE
-    played IS TRUE
+    status = 'expected'
+    AS played IS TRUE
