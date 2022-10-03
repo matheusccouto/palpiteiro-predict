@@ -36,6 +36,12 @@ SELECT
     total_points_last_5,
     offensive_points_last_5,
     defensive_points_last_5,
+    played_last_19,
+    played_last_5,
+    valid_club_last_19,
+    valid_club_last_5,
+    valid_opponent_last_19,
+    valid_opponent_last_5,
     total_points -- target
 FROM
     palpiteiro.fct_player
