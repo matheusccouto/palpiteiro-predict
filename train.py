@@ -235,14 +235,19 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         for key, val in study.best_params.items()
         if not key.startswith("column__")
     }
+    best_cols = {
+        key: val
+        for key, val in study.best_params.items()
+        if key.startswith("column__")
+    }
     MODEL.set_params(**best_params)
     fit(
         MODEL,
-        pd.concat((X_train, X_valid)),
+        pd.concat((X_train, X_valid))[best_cols],
         pd.concat((y_train, y_valid)),
         pd.concat((q_train, q_valid)),
     )
-    test_score = score(MODEL, X_test, y_test, q_test)
+    test_score = score(MODEL, X_test[best_cols], y_test, q_test)
     logging.info("testing scoring: %.3f", test_score)
 
     # Drafting Simulation.
@@ -254,7 +259,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
         # Data fot this specifc round.
-        rnd[f"{TARGET_COL}_pred"] = MODEL.predict(X.loc[rnd.index])
+        rnd[f"{TARGET_COL}_pred"] = MODEL.predict(X.loc[rnd.index][best_cols])
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
@@ -304,7 +309,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     # Retrain model on all datasets and export it.
     fit(
         MODEL,
-        pd.concat((X_train, X_valid, X_test)),
+        pd.concat((X_train, X_valid, X_test))[best_cols],
         pd.concat((y_train, y_valid, y_test)),
         pd.concat((q_train, q_valid, q_test)),
     )

@@ -42,10 +42,10 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials 250 \
+          --n-trials 1000 \
           --max-players-per-club 5 \
           --dropout 0.333 \
-          --n-times 10
+          --n-times 50
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
