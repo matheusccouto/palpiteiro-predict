@@ -254,7 +254,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         rnd = rnd.reset_index().rename(mapping, axis=1)[list(mapping.values())]
 
         # Take the exponential from the prediction to make it easier to draft
-        rnd["points"] = rnd["points"].exp()
+        rnd["points"] = np.exp(rnd["points"])
 
         # Make several concurrent calls agains the Draft API
         with concurrent.futures.ThreadPoolExecutor() as executor:
