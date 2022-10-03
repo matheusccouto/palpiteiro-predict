@@ -243,7 +243,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     best_cols = [
         key.replace("column__", "")
         for key, val in study.best_params.items()
-        if val is True
+        if key.startswith("column__") and val is True
     ]
     MODEL.set_params(**best_params)
     fit(
