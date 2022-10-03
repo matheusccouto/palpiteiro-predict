@@ -54,11 +54,16 @@ MODEL = lgbm.LGBMRanker(n_estimators=100, n_jobs=-1)
 
 def fit(model, X, y, q):
     """Fit model."""
+    if POSITION_ID_COL in X.columns:
+        cats = [POSITION_ID_COL]
+    else:
+        cats = "auto"
+
     model.fit(
         X,
         y.clip(0, 30).round(0).astype("int32"),
         group=q,
-        categorical_feature="auto",
+        categorical_feature=cats,
     )
 
 
@@ -236,7 +241,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         if not key.startswith("column__")
     }
     best_cols = [
-        key.removesuffix("column__")
+        key.replace("column__", "")
         for key, val in study.best_params.items()
         if val is True
     ]
