@@ -236,7 +236,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         if not key.startswith("column__")
     }
     best_cols = {
-        key: val
+        key.removesuffix("column__"): val
         for key, val in study.best_params.items()
         if key.startswith("column__")
     }
