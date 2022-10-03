@@ -58,7 +58,7 @@ def fit(model, X, y, q):
         X,
         y.clip(0, 30).round(0).astype("int32"),
         group=q,
-        categorical_feature=[POSITION_ID_COL],
+        categorical_feature="auto",
     )
 
 
@@ -107,8 +107,15 @@ class Objective:
             reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 1e0, log=True),
         )
         MODEL.set_params(**params)
-        fit(MODEL, self.X_train, self.y_train, self.q_train)
-        return score(MODEL, self.X_test, self.y_test, self.q_test)
+
+        cols = [
+            col
+            for col in self.X_train.columns
+            if trial.suggest_categorical(f"column__{col}", [True, False])
+        ]
+
+        fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
+        return score(MODEL, self.X_test[cols], self.y_test, self.q_test)
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -222,8 +229,13 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
 
     logging.info("validation scoring: %.3f", valid_score)
 
-    # Apply best params and retrain to score agains test set.
-    MODEL.set_params(**study.best_params)
+    # Apply best params and columns and retrain to score agains test set.
+    best_params = {
+        key: val
+        for key, val in study.best_params.items()
+        if not key.startswith("column__")
+    }
+    MODEL.set_params(**best_params)
     fit(
         MODEL,
         pd.concat((X_train, X_valid)),
