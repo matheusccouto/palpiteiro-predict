@@ -235,11 +235,11 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         for key, val in study.best_params.items()
         if not key.startswith("column__")
     }
-    best_cols = {
-        key.removesuffix("column__"): val
+    best_cols = [
+        key.removesuffix("column__")
         for key, val in study.best_params.items()
-        if key.startswith("column__")
-    }
+        if val is True
+    ]
     MODEL.set_params(**best_params)
     fit(
         MODEL,
