@@ -180,7 +180,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
 
     # Data points where data will be splitted.
     split = [
-        groups.max() - (3 * 38),  # Traning start.
+        groups.max() - (4 * 38),  # Traning start.
         groups.max() - (2 * 38),  # Training end and validation start.
         groups.max() - (1 * 38),  # Validation end and testing start.
         groups.max() - (0 * 38),  # Testing end.
