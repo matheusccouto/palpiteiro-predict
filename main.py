@@ -1,6 +1,5 @@
 """Google Cloud Functions to predict player points."""
 
-import json
 import os
 
 import lightgbm as lgbm
