@@ -9,7 +9,7 @@ on:
 jobs:
   linting:
     runs-on: ubuntu-latest
-    environment: ${{ github.BASE_REF }}
+    environment: dev
 
     steps:
       - name: Checkout repo
