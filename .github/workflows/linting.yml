@@ -1,0 +1,29 @@
+name: Linting
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  
+jobs:
+  linting:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.9
+
+      - name: Install requirements
+        run: |
+          pip install --upgrade pip wheel
+          pip install pylint -r requirements.txt -r requirements-train.txt -r requirements-test.txt
+
+      - name: Lint
+        run: pylint main.py train.py tests
