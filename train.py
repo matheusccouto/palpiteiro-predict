@@ -173,7 +173,7 @@ def draft(data, max_players_per_club, dropout):
 
 def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     """Main exec."""
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-statements
 
     # Read data
     with open(QUERY, encoding="utf-8") as file:
