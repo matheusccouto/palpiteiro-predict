@@ -76,7 +76,7 @@ def score(model, X, y, q):
     y_test_rnd = [model.predict(X.iloc[s:e]) for s, e in zip(start_idx, end_idx)]
 
     scores = [
-        ndcg_score(y_true.reshape(1, -1), y_test.reshape(1, -1))
+        ndcg_score(y_true.reshape(1, -1), y_test.reshape(1, -1), k=20)
         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
     ]
     return np.mean(scores)
