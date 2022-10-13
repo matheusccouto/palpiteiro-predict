@@ -30,6 +30,7 @@ SELECT
     avg_odds_club,
     avg_odds_opponent,
     avg_odds_draw,
+    drafts_norm,
     total_points_last_19,
     offensive_points_last_19,
     defensive_points_last_19,
@@ -48,3 +49,4 @@ FROM
 WHERE
     status = 'expected'
     AND played IS TRUE
+    AND season > 2018
