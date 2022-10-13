@@ -260,6 +260,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     # It will iterate round by round from the test set
     # simulating how would be the scoring of a team drafted using this model.
 
+    populars = pd.read_gbq("SELECT * FROM express.fct_squad")
+
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
@@ -289,27 +291,51 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
                 name=idx,
             )
 
-        logging.info("%04d-%02d: %.1f", idx[0], idx[1], draft_scores.mean())
+        mean_points = draft_scores.mean()
 
         # Test again, but for a perfect scenario. Instead of using predictions
         # use the actual points to see how a perfect model would be.
         rnd["points"] = rnd["actual_points"]
-        draft_scores["max"] = draft(rnd, 5, 0.0)
+        max_points = draft(rnd, 5, 0.0)
+        draft_scores["max"] = max_points
 
-        # Evaluate how much points the most frequent team would score.
-        # draft_scores["mode"] = ... TODO
+        # Get how many points a team with the most popular players would have scored.
+        mode_points = populars.query("season==@idx[0] and round==@idx[1]")[
+            "points"
+        ].iloc[0]
+        draft_scores["mode"] = mode_points
+
+        logging.info(
+            "%04d-%02d: %03.1f  Mode: %03.1f  Max %03.1f",
+            idx[0],
+            idx[1],
+            mean_points,
+            mode_points,
+            max_points,
+        )
 
         history.append(draft_scores)
 
     history = pd.concat(history, axis=1).transpose()
 
-    overall_mean_score = history.drop(columns=["max"]).mean().mean()
+    overall_mean_score = history.drop(columns=["max", "mode"]).mean().mean()
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
 
-    overall_mean_norm_score = (
-        history.drop(columns=["max"]).divide(history["max"], axis=0).mean().mean()
+    overall_mean_max_score = (
+        history.drop(columns=["max", "mode"])
+        .divide(history["max"], axis=0)
+        .mean()
+        .mean()
     )
-    logging.info("Overall Mean Normalized Draft: %.2f", overall_mean_norm_score)
+    logging.info("Overall Mean / Max Draft: %.2f", overall_mean_max_score)
+
+    overall_mean_mode_score = (
+        history.drop(columns=["max", "mode"])
+        .divide(history["mode"], axis=0)
+        .mean()
+        .mean()
+    )
+    logging.info("Overall Mean / Mode Draft: %.2f", overall_mean_mode_score)
 
     # Retrain model on all datasets and export it.
     fit(
