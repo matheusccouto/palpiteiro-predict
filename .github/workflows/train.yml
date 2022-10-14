@@ -44,7 +44,7 @@ jobs:
           python train.py \
           --n-trials 1000 \
           --max-players-per-club 5 \
-          --dropout 0.2 \
+          --dropout 0.1 \
           --n-times 50
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
