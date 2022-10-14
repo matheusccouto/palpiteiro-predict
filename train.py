@@ -13,6 +13,7 @@ from decimal import Decimal
 import lightgbm as lgbm
 import numpy as np
 import optuna
+import optuna.logging
 import optuna.visualization
 import pandas as pd
 import requests
@@ -26,6 +27,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(stream=sys.stdout)],
 )
 warnings.simplefilter("ignore")
+optuna.logging.set_verbosity(optuna.logging.WARN)
 
 # pylint: disable=invalid-name
 
