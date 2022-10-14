@@ -27,7 +27,7 @@ on:
 jobs:
   experiment:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ github.REF_NAME }}
 
     steps:
       - name: Checkout repo
