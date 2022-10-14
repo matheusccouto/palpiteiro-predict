@@ -1,0 +1,60 @@
+name: Experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      n_trials:
+        description: Number of trials
+        required: true
+        default: '1000'
+      max_players_per_club:
+        description: Max players per club
+        required: true
+        default: '5'
+      dropout:
+        description: Dropout
+        required: true
+        default: '0.1'
+      n_times:
+        description: Number of drafts on each round
+        required: true
+        default: '0.1'
+      k:
+        description: NDCG K parameter
+        required: true
+        default: '20'      
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v0
+        with:
+          credentials_json: ${{ secrets.GCP_KEYFILE }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.9
+
+      - name: Install requirements
+        run: pip install -r requirements-train.txt
+
+      - name: Train
+        run: |
+          python train.py \
+          --n-trials {{ github.event.inputs.n_trials }} \
+          --max-players-per-club {{ github.event.inputs.max_players_per_club }} \
+          --dropout {{ github.event.inputs.dropout }} \
+          --n-times {{ github.event.inputs.n_times }} \
+          --k {{ github.event.inputs.k }}
+        env:
+          DRAFT_URL: ${{ secrets.DRAFT_URL }}
+          DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}

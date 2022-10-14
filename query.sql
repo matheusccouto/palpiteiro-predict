@@ -43,7 +43,8 @@ SELECT
     valid_club_last_5,
     valid_opponent_last_19,
     valid_opponent_last_5,
-    total_points -- target
+    NTILE(2) OVER (PARTITION BY season, round ORDER BY total_points ASC) AS tier, -- target
+    total_points -- for drafting simulation only
 FROM
     palpiteiro.fct_player
 WHERE

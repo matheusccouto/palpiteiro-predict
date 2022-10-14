@@ -45,10 +45,12 @@ jobs:
           --n-trials 1000 \
           --max-players-per-club 5 \
           --dropout 0.1 \
-          --n-times 50
+          --n-times 50 \
+          --k 20
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
 
       - name: Upload artifact
         run: gcloud storage cp model.txt gs://${{ secrets.BUCKET_NAME }}/points/model.txt
