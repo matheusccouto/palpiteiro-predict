@@ -1,6 +1,12 @@
 name: Experiment
 
 on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - .github/workflows/experiment.yml
   workflow_dispatch:
     inputs:
       n_trials:
