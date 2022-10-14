@@ -7,28 +7,28 @@ on:
       - dev
     paths:
       - .github/workflows/experiment.yml
-  workflow_dispatch:
-    inputs:
-      n_trials:
-        description: Number of trials
-        required: true
-        default: '1000'
-      n_trials:
-        description: Max players per club
-        required: true
-        default: '5'
-      dropout:
-        description: Dropout
-        required: true
-        default: '0.1'
-      n_times:
-        description: Number of drafts on each round
-        required: true
-        default: '0.1'
-      k:
-        description: NDCG K parameter
-        required: true
-        default: '20'      
+  # workflow_dispatch:
+  #   inputs:
+  #     n_trials:
+  #       description: Number of trials
+  #       required: true
+  #       default: '1000'
+  #     n_trials:
+  #       description: Max players per club
+  #       required: true
+  #       default: '5'
+  #     dropout:
+  #       description: Dropout
+  #       required: true
+  #       default: '0.1'
+  #     n_times:
+  #       description: Number of drafts on each round
+  #       required: true
+  #       default: '0.1'
+  #     k:
+  #       description: NDCG K parameter
+  #       required: true
+  #       default: '20'      
 
 jobs:
   experiment:
