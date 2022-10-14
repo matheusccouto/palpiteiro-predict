@@ -13,6 +13,7 @@ from decimal import Decimal
 import lightgbm as lgbm
 import numpy as np
 import optuna
+import optuna.visualization
 import pandas as pd
 import requests
 import wandb
@@ -36,11 +37,11 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
 N_TIMES = 1
-N_TRIALS = 100
+N_TRIALS = 10
 TIMEOUT = None
 
 # Columns
-TARGET_COL = "ranking"
+TARGET_COL = "tier"
 POINTS_COL = "total_points"
 ID_COL = "player_id"
 SEASON_COL = "season"
@@ -76,7 +77,7 @@ def fit(model, X, y, q):
     )
 
 
-def score(model, X, y, q):
+def score(model, X, y, q, k):
     """Make predictions."""
     start_idx = q.cumsum().shift().fillna(0).astype("int32")
     end_idx = q.cumsum()
@@ -87,7 +88,7 @@ def score(model, X, y, q):
     ]
 
     scores = [
-        ndcg_score([y_true], [y_test], k=K)
+        ndcg_score([y_true], [y_test], k=k)
         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
     ]
     return np.mean(scores)
@@ -103,6 +104,7 @@ class Objective:
     X_test: pd.DataFrame
     y_test: pd.Series
     q_test: pd.Series
+    k: int
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
@@ -129,11 +131,11 @@ class Objective:
         cols = [
             col
             for col in self.X_train.columns
-            if trial.suggest_categorical(f"column__{col}", [True, False])
+            if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
         fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
-        return score(MODEL, self.X_test[cols], self.y_test, self.q_test)
+        return score(MODEL, self.X_test[cols], self.y_test, self.q_test, self.k)
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -184,15 +186,29 @@ def draft(data, max_players_per_club, dropout):
     return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
 
 
-def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
+def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements
 
     wandb.init(project="palpiteiro-predict")
+    wandb.log(
+        {
+            "n_trials": n_trials,
+            "timeout": timeout,
+            "max_players_per_club": max_plyrs_per_club,
+            "dropout": dropout,
+            "n_times": n_times,
+        }
+    )
 
     # Read data
     with open(QUERY, encoding="utf-8") as file:
-        data = pd.read_gbq(file.read())
+        file_content = file.read()
+
+    data = pd.read_gbq(file_content)
+    artifact = wandb.Artifact('query', type='query')
+    artifact.add_file('query.sql', name="query.sql.txt")
+    wandb.log_artifact(artifact)
 
     # These are the columns that will only be used for the drafting simulation.
     # They must be removed from training data.
@@ -251,32 +267,63 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     q_test = groups.loc[test_index].value_counts(sort=False)
 
     # Hyperparams tuning with optuna.
-    obj = Objective(X_train, y_train, q_train, X_valid, y_valid, q_valid)
+    obj = Objective(X_train, y_train, q_train, X_valid, y_valid, q_valid, k)
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
     valid_score = study.best_value
 
+    wandb.log({"validation_scoring": valid_score})
     logging.info("validation scoring: %.3f", valid_score)
 
     # Apply best params and columns and retrain to score agains test set.
     best_params = {
         key: val
         for key, val in study.best_params.items()
-        if not key.startswith("column__")
+        if not key.startswith("col__")
     }
-    best_cols = [
-        key.replace("column__", "")
-        for key, val in study.best_params.items()
-        if key.startswith("column__") and val is True
-    ]
+    wandb.log({"params": pd.DataFrame(best_params, index=[0])})
+    best_cols = {
+        key: val for key, val in study.best_params.items() if key.startswith("col__")
+    }
+    wandb.log(
+        {
+            "columns": pd.DataFrame(
+                {col.replace("col__", ""): val for col, val in best_cols.items()},
+                index=[0],
+            )
+        }
+    )
+    selected_cols = [col.replace("col__", "") for col, val in best_cols.items() if val]
+
+    # Optuna plots
+    wandb.log(
+        {
+            "optimization_history": optuna.visualization.plot_optimization_history(
+                study=study
+            ),
+            "params_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
+                study=study, params=list(best_params.keys())
+            ),
+            "columns_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
+                study=study, params=list(best_cols.keys())
+            ),
+            "params_importance": optuna.visualization.plot_param_importances(
+                study=study, params=list(best_params.keys())
+            ),
+            "columns_importance": optuna.visualization.plot_param_importances(
+                study=study, params=list(best_cols.keys())
+            ),
+        }
+    )
     MODEL.set_params(**best_params)
     fit(
         MODEL,
-        pd.concat((X_train, X_valid))[best_cols],
+        pd.concat((X_train, X_valid))[selected_cols],
         pd.concat((y_train, y_valid)),
         pd.concat((q_train, q_valid)),
     )
-    test_score = score(MODEL, X_test[best_cols], y_test, q_test)
+    test_score = score(MODEL, X_test[selected_cols], y_test, q_test, k)
+    wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
 
     # Drafting Simulation.
@@ -290,7 +337,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
         # Data for this specifc round.
-        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][best_cols])
+        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
@@ -312,7 +359,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
-                name=idx,
+                name=f"{idx[0]}-{idx[1]:02d}",
             )
 
         mean_points = draft_scores.mean()
@@ -342,7 +389,9 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
 
     history = pd.concat(history, axis=1).transpose()
 
-    overall_mean_score = history.drop(columns=["max", "mode"]).mean().mean()
+    history["mean"] = history.drop(columns=["max", "mode"]).mean(axis=1)
+    overall_mean_score = history["mean"].mean()
+    wandb.log({"Overall Mean Draft": overall_mean_score})
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
 
     overall_mean_max_score = (
@@ -351,7 +400,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         .mean()
         .mean()
     )
-    logging.info("Overall Mean / Max Draft: %.2f", overall_mean_max_score)
+    wandb.log({"Overall Mean Over Max Draft": overall_mean_max_score})
+    logging.info("Overall Mean Over Max Draft: %.2f", overall_mean_max_score)
 
     overall_mean_mode_score = (
         history.drop(columns=["max", "mode"])
@@ -359,12 +409,15 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
         .mean()
         .mean()
     )
-    logging.info("Overall Mean / Mode Draft: %.2f", overall_mean_mode_score)
+    wandb.log({"Overall Mean Over Mode Draft": overall_mean_mode_score})
+    logging.info("Overall Mean Over Mode Draft: %.2f", overall_mean_mode_score)
+
+    wandb.log({"simulation": history[["mean", "mode", "max"]].reset_index()})
 
     # Retrain model on all datasets and export it.
     fit(
         MODEL,
-        pd.concat((X_train, X_valid, X_test))[best_cols],
+        pd.concat((X_train, X_valid, X_test))[selected_cols],
         pd.concat((y_train, y_valid, y_test)),
         pd.concat((q_train, q_valid, q_test)),
     )
@@ -379,6 +432,7 @@ if __name__ == "__main__":
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
+    parser.add_argument("--k", default=K, type=int)
     parser.add_argument("-m", "--message", default="")
     args = parser.parse_args()
 
@@ -388,4 +442,5 @@ if __name__ == "__main__":
         max_plyrs_per_club=args.max_players_per_club,
         dropout=args.dropout,
         n_times=args.n_times,
+        k=args.k,
     )
