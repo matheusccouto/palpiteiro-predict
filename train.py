@@ -15,7 +15,9 @@ import numpy as np
 import optuna
 import pandas as pd
 import requests
+import wandb
 from sklearn.metrics import ndcg_score
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -174,6 +176,8 @@ def draft(data, max_players_per_club, dropout):
 def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements
+
+    wandb.init(project="palpiteiro-predict")
 
     # Read data
     with open(QUERY, encoding="utf-8") as file:

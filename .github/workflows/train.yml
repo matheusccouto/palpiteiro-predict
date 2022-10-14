@@ -49,6 +49,7 @@ jobs:
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
 
       - name: Upload artifact
         run: gcloud storage cp model.txt gs://${{ secrets.BUCKET_NAME }}/points/model.txt
