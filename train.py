@@ -40,7 +40,8 @@ N_TRIALS = 100
 TIMEOUT = None
 
 # Columns
-TARGET_COL = "total_points"
+TARGET_COL = "ranking"
+POINTS_COL = "total_points"
 ID_COL = "player_id"
 SEASON_COL = "season"
 ROUND_COL = "round"
@@ -51,7 +52,13 @@ POSITION_COL = "position"
 POSITION_ID_COL = "position_id"
 
 # Base Model
-MODEL = lgbm.LGBMRanker(n_estimators=100, n_jobs=-1)
+K = 20
+MODEL = lgbm.LGBMRanker(
+    n_estimators=100,
+    n_jobs=-1,
+    # label_gain=,
+    objective="rank_xendcg",
+)
 
 
 def fit(model, X, y, q):
@@ -74,11 +81,13 @@ def score(model, X, y, q):
     start_idx = q.cumsum().shift().fillna(0).astype("int32")
     end_idx = q.cumsum()
 
-    y_true_rnd = [y.iloc[s:e].values for s, e in zip(start_idx, end_idx)]
-    y_test_rnd = [model.predict(X.iloc[s:e]) for s, e in zip(start_idx, end_idx)]
+    y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
+    y_test_rnd = [
+        model.predict(X.iloc[s:e]).tolist() for s, e in zip(start_idx, end_idx)
+    ]
 
     scores = [
-        ndcg_score(y_true.reshape(1, -1), y_test.reshape(1, -1), k=20)
+        ndcg_score([y_true], [y_test], k=K)
         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
     ]
     return np.mean(scores)
@@ -112,6 +121,8 @@ class Objective:
             colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 1e0, log=True),
             reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 1e0, log=True),
+            # lambdarank_truncation_level=trial.suggest_int("lambdarank_truncation_level", K, 2 * K),
+            # lambdarank_norm=trial.suggest_categorical("lambdarank_norm", [True, False]),
         )
         MODEL.set_params(**params)
 
@@ -185,7 +196,16 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
 
     # These are the columns that will only be used for the drafting simulation.
     # They must be removed from training data.
-    draft_cols = [TARGET_COL, SEASON_COL, ROUND_COL, CLUB_COL, POSITION_COL, PRICE_COL]
+    draft_cols = [
+        ID_COL,
+        POINTS_COL,
+        TARGET_COL,
+        SEASON_COL,
+        ROUND_COL,
+        CLUB_COL,
+        POSITION_COL,
+        PRICE_COL,
+    ]
 
     # This is a ranking model. It needs to know the groups in order to learn.
     # Groups are expected to be a list of group sizes.
@@ -269,14 +289,14 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times):
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
-        # Data fot this specifc round.
-        rnd[f"{TARGET_COL}_pred"] = MODEL.predict(X.loc[rnd.index][best_cols])
+        # Data for this specifc round.
+        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][best_cols])
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
             POSITION_COL: "position",
             PRICE_COL: "price",
-            TARGET_COL: "actual_points",
+            POINTS_COL: "actual_points",
             "total_points_pred": "points",
         }
         rnd = rnd.reset_index().rename(mapping, axis=1)[list(mapping.values())]
