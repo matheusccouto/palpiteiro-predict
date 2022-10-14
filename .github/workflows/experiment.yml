@@ -1,12 +1,6 @@
 name: Experiment
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-    paths:
-      - .github/workflows/experiment.yml
   workflow_dispatch:
     inputs:
       n_trials:
@@ -55,11 +49,11 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials {{ inputs.n_trials }} \
-          --max-players-per-club {{ inputs.max_players_per_club }} \
-          --dropout {{ inputs.dropout }} \
-          --n-times {{ inputs.dropout }} \
-          --k {{ inputs.k }}
+          --n-trials {{ github.event.inputs.n_trials }} \
+          --max-players-per-club {{ github.event.inputs.max_players_per_club }} \
+          --dropout {{ github.event.inputs.dropout }} \
+          --n-times {{ github.event.inputs.n_times }} \
+          --k {{ github.event.inputs.k }}
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
