@@ -56,8 +56,8 @@ jobs:
           --max-players-per-club {{ github.event.inputs.max_players_per_club }} \
           --dropout {{ github.event.inputs.dropout }} \
           --n-times {{ github.event.inputs.n_times }} \
-          --k {{ github.event.inputs.k }}
-          -m {{ github.event.inputs.notes }}
+          --k {{ github.event.inputs.k }} \
+          -m {{ github.event.inputs.notes }} \
           -t 'experiment.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
