@@ -16,13 +16,16 @@ on:
         required: true
         default: 0.1
       n_times:
-        description: Number of drafts on each round
-        required: true
+        description: Number of drafts
         default: 0.1
       k:
-        description: NDCG K parameter
+        description: NDCG K
         required: true
         default: 20
+      notes:
+        description: Notes
+        required: true
+        default: ''
 
 jobs:
   experiment:
@@ -54,6 +57,8 @@ jobs:
           --dropout {{ github.event.inputs.dropout }} \
           --n-times {{ github.event.inputs.n_times }} \
           --k {{ github.event.inputs.k }}
+          -m {{ github.event.inputs.notes }}
+          -t 'experiment.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}

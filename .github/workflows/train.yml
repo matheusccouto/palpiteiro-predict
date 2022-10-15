@@ -47,6 +47,7 @@ jobs:
           --dropout 0.1 \
           --n-times 50 \
           --k 20
+          -t 'train.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
           DRAFT_KEY: ${{ secrets.DRAFT_KEY }}
