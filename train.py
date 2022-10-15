@@ -125,7 +125,9 @@ class Objective:
             colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 1e0, log=True),
             reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 1e0, log=True),
-            # lambdarank_truncation_level=trial.suggest_int("lambdarank_truncation_level", K, 2 * K),
+            # lambdarank_truncation_level=trial.suggest_int(
+            #     "lambdarank_truncation_level", k, 2 * k
+            # ),
             # lambdarank_norm=trial.suggest_categorical("lambdarank_norm", [True, False]),
         )
         MODEL.set_params(**params)

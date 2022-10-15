@@ -24,7 +24,7 @@ on:
         default: 20
       notes:
         description: Notes
-        required: true
+        required: false
         default: ''
 
 jobs:
