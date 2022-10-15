@@ -188,11 +188,19 @@ def draft(data, max_players_per_club, dropout):
     return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
 
 
-def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k):
+def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes):
     """Main exec."""
-    # pylint: disable=too-many-locals,too-many-statements
+    # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
+    logging.info("Number of Trials: %s", n_trials)
+    logging.info("Timeout: %s", timeout)
+    logging.info("Max Players per Club: %s", max_plyrs_per_club)
+    logging.info("Dropout: %s", dropout)
+    logging.info("Number of Times: %s", n_times)
+    logging.info("NDCG K: %s", k)
+    logging.info("Notes: %s", notes)
+    logging.info("Tags: %s", tags)
 
-    wandb.init(project="palpiteiro-predict")
+    wandb.init(project="palpiteiro-predict", tags=tags, notes=notes)
     wandb.log(
         {
             "n_trials": n_trials,
@@ -208,8 +216,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k):
         file_content = file.read()
 
     data = pd.read_gbq(file_content)
-    artifact = wandb.Artifact('query', type='query')
-    artifact.add_file('query.sql', name="query.sql.txt")
+    artifact = wandb.Artifact("query", type="query")
+    artifact.add_file("query.sql", name="query.sql.txt")
     wandb.log_artifact(artifact)
 
     # These are the columns that will only be used for the drafting simulation.
@@ -436,6 +444,7 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
     parser.add_argument("--k", default=K, type=int)
     parser.add_argument("-m", "--message", default="")
+    parser.add_argument("-t", "--tags", action="append", nargs="+", default=[])
     args = parser.parse_args()
 
     main(
@@ -445,4 +454,6 @@ if __name__ == "__main__":
         dropout=args.dropout,
         n_times=args.n_times,
         k=args.k,
+        tags=[t for group in args.tags for t in group],
+        notes=args.message,
     )
