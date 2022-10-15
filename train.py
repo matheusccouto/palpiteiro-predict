@@ -444,7 +444,7 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
     parser.add_argument("--k", default=K, type=int)
     parser.add_argument("-m", "--message", default="")
-    parser.add_argument("-t", "--tags", action='append', nargs='+', default=[])
+    parser.add_argument("-t", "--tags", action="append", nargs="+", default=[])
     args = parser.parse_args()
 
     main(
