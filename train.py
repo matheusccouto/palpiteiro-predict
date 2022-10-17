@@ -343,7 +343,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     # It will iterate round by round from the test set
     # simulating how would be the scoring of a team drafted using this model.
 
-    populars = pd.read_gbq("SELECT * FROM express.fct_squad")
+    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
+    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
 
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
@@ -376,10 +377,9 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
 
         mean_points = draft_scores.mean()
 
-        # Test again, but for a perfect scenario. Instead of using predictions
-        # use the actual points to see how a perfect model would be.
-        rnd["points"] = rnd["actual_points"]
-        max_points = draft(rnd, 5, 0.0)
+        max_points = bests.query("season==@idx[0] and round==@idx[1]")[
+            "points"
+        ].iloc[0]
         draft_scores["max"] = max_points
 
         # Get how many points a team with the most popular players would have scored.
