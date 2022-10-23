@@ -189,6 +189,15 @@ def draft(data, max_players_per_club, dropout):
     return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
 
 
+def estimate_prize(x):
+    """Estimate prize given the normalized points."""
+    return np.clip(
+        1.49470970e-12 * np.exp(5.99746092e01 * x) + -1.28361653e01,
+        0,
+        10000,
+    )
+
+
 def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
@@ -217,7 +226,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     with open(QUERY, encoding="utf-8") as file:
         file_content = file.read()
 
-    data = pd.read_gbq(file_content)
+    data = pd.read_gbq(file_content).dropna(subset=[TARGET_COL])
     artifact = wandb.Artifact("query", type="query")
     artifact.add_file("query.sql", name="query.sql.txt")
     wandb.log_artifact(artifact)
@@ -345,9 +354,15 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
 
     populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
     bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
+    prizes = pd.read_gbq("SELECT * FROM express.fct_prize")
 
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
+
+        # if not (
+        #     idx[0] in prizes["season"].unique() and idx[1] in prizes["round"].unique()
+        # ):
+        #     continue
 
         # Data for this specifc round.
         rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
@@ -377,9 +392,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
 
         mean_points = draft_scores.mean()
 
-        max_points = bests.query("season==@idx[0] and round==@idx[1]")[
-            "points"
-        ].iloc[0]
+        max_points = bests.query("season==@idx[0] and round==@idx[1]")["points"].iloc[0]
         draft_scores["max"] = max_points
 
         # Get how many points a team with the most popular players would have scored.
@@ -388,26 +401,63 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
         ].iloc[0]
         draft_scores["mode"] = mode_points
 
+        prizes_rnd = prizes.query("season==@idx[0] and round==@idx[1]")
+        prizes_rnd = prizes_rnd.sort_values("rank")
+        if prizes_rnd.shape[0] > 0:
+
+            def get_prize(pnt):
+                try:
+                    return prizes_rnd.query(f"points<={pnt}")["prizes"].iloc[0]
+                except IndexError:
+                    return 0
+
+            real_prizes = [
+                get_prize(pnt)
+                # pylint: disable=not-an-iterable
+                for pnt in draft_scores.drop(["max", "mode"])
+            ]
+
+        else:
+            real_prizes = [np.nan]
+        draft_scores["prize"] = pd.Series(real_prizes)
+
+        estimated_prizes = (
+            (draft_scores.drop(["max", "mode", "prize"]) - mode_points)
+            / (max_points - mode_points)
+        ).apply(estimate_prize)
+        draft_scores["prize_estimated"] = estimated_prizes
+
+        log_str = (
+            "%04d-%02d: %03.1f  "
+            "Mode: %03.1f  "
+            "Max %03.1f  "
+            "Prizes %03.1f  "
+            "Estimated Prize %03.1f"
+        )
         logging.info(
-            "%04d-%02d: %03.1f  Mode: %03.1f  Max %03.1f",
+            log_str,
             idx[0],
             idx[1],
             mean_points,
             mode_points,
             max_points,
+            sum(real_prizes),
+            sum(estimated_prizes),
         )
 
         history.append(draft_scores)
 
     history = pd.concat(history, axis=1).transpose()
 
-    history["mean"] = history.drop(columns=["max", "mode"]).mean(axis=1)
+    history["mean"] = history.drop(
+        columns=["max", "mode", "prize", "prize_estimated"]
+    ).mean(axis=1)
     overall_mean_score = history["mean"].mean()
     wandb.log({"Overall Mean Draft": overall_mean_score})
     logging.info("Overall Mean Draft: %.2f", overall_mean_score)
 
     overall_mean_max_score = (
-        history.drop(columns=["max", "mode"])
+        history.drop(columns=["max", "mode", "prize", "prize_estimated"])
         .divide(history["max"], axis=0)
         .mean()
         .mean()
@@ -416,13 +466,28 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     logging.info("Overall Mean Over Max Draft: %.2f", overall_mean_max_score)
 
     overall_mean_mode_score = (
-        history.drop(columns=["max", "mode"])
+        history.drop(columns=["max", "mode", "prize", "prize_estimated"])
         .divide(history["mode"], axis=0)
         .mean()
         .mean()
     )
     wandb.log({"Overall Mean Over Mode Draft": overall_mean_mode_score})
     logging.info("Overall Mean Over Mode Draft: %.2f", overall_mean_mode_score)
+
+    investment = 10 * sum(prz.dropna().shape[0] for prz in history["prize"])
+    overall_roi = (
+        history["prize"].apply(lambda x: x.sum(skipna=False)).sum() - investment
+    ) / investment
+    wandb.log({"Overall ROI": overall_roi})
+    logging.info("Overall ROI: %.2f", overall_roi)
+
+    investment = 10 * sum(prz.dropna().shape[0] for prz in history["prize_estimated"])
+    overall_estimated_roi = (
+        history["prize_estimated"].apply(lambda x: x.sum(skipna=False)).sum()
+        - investment
+    ) / investment
+    wandb.log({"Overall Estimated ROI": overall_estimated_roi})
+    logging.info("Overall Estimated ROI: %.2f", overall_estimated_roi)
 
     wandb.log({"simulation": history[["mean", "mode", "max"]].reset_index()})
 
