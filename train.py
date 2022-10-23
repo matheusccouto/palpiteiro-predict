@@ -407,6 +407,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
 
             def get_prize(pnt):
                 try:
+                    # pylint: disable=cell-var-from-loop
                     return prizes_rnd.query(f"points<={pnt}")["prizes"].iloc[0]
                 except IndexError:
                     return 0
