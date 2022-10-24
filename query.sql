@@ -43,7 +43,6 @@ SELECT
     valid_club_last_5,
     valid_opponent_last_19,
     valid_opponent_last_5,
-    tier, -- target
     total_points -- for drafting simulation only
 FROM
     palpiteiro.fct_player
