@@ -21,11 +21,7 @@ on:
         default: position
       n_times:
         description: Number of drafts
-        default: 0.1
-      k:
-        description: NDCG K
-        required: true
-        default: 20
+        default: 50
       notes:
         description: Notes
         required: false
