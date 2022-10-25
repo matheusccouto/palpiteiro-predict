@@ -45,8 +45,8 @@ jobs:
           --n-trials 1000 \
           --max-players-per-club 5 \
           --dropout 0.1 \
+          --dropout-type position \
           --n-times 50 \
-          --k 20 \
           -t 'train.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}

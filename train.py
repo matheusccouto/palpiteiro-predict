@@ -3,7 +3,6 @@
 import argparse
 import json
 import logging
-from multiprocessing.sharedctypes import Value
 import os
 import sys
 import warnings
@@ -28,7 +27,7 @@ logging.basicConfig(
 warnings.simplefilter("ignore")
 # optuna.logging.set_verbosity(optuna.logging.WARN)
 
-# pylint: disable=invalid-name,too-many-arguments
+# pylint: disable=invalid-name,too-many-arguments,too-many-locals,too-many-instance-attributes
 
 # Paths
 THIS_DIR = os.path.dirname(__file__)
@@ -36,9 +35,9 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 
 # Default Args
 MAX_PLYRS_P_CLUB = 5
-DROPOUT = 0.1
-DROPOUT_TYPE = "all"
-N_TIMES = 10
+DROPOUT = 0.0
+DROPOUT_TYPE = "position"
+N_TIMES = 1
 N_TRIALS = 100
 TIMEOUT = None
 
@@ -87,18 +86,19 @@ def draft(data, max_players_per_club, dropout, dropout_type):
     clubs = {club: 0 for club in data[CLUB_COL].unique()}
     count = 0
 
-    if "all" in dropout_type:
-        data = data.sample(frac=1 - dropout)
-    elif "position" in dropout_type:
-        data = data.groupby(POSITION_COL, group_keys=False).apply(
-            lambda x: x.sample(frac=1 - dropout)
-        )
-    elif "club" in dropout_type:
-        data = data[
-            data["club"].isin(data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout))
-        ]
-    else:
-        raise ValueError(f"Could not understant dropout type: {dropout_type}")
+    if dropout:
+        if "all" in dropout_type:
+            data = data.sample(frac=1 - dropout)
+        elif "position" in dropout_type:
+            data = data.groupby(POSITION_COL, group_keys=False).apply(
+                lambda x: x.sample(frac=1 - dropout)
+            )
+        elif "club" in dropout_type:
+            data = data[
+                data["club"].isin(data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout))
+            ]
+        else:
+            raise ValueError(f"Could not understant dropout type: {dropout_type}")
 
     for _, player in data.sort_values(PRED_COL, ascending=False).iterrows():
 
@@ -123,11 +123,24 @@ def fit(model, data, features):
     model.fit(data[features].astype("float32"), data[TARGET_COL])
 
 
-def score(model, data, features, max_players_per_club, dropout, dropout_type, n_times):
+def score(
+    model,
+    data,
+    features,
+    max_players_per_club,
+    dropout,
+    dropout_type,
+    n_times,
+    populars,
+    bests,
+):
     """Make predictions and evaluate how many points would have been scored."""
     scores = []
-    for _, rnd in data.groupby([SEASON_COL, ROUND_COL]):
+    for idx, rnd in data.groupby([SEASON_COL, ROUND_COL]):
         rnd[PRED_COL] = model.predict(rnd[features].astype("float32"))
+
+        pop = populars.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
+        best = bests.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
 
         rnd_scores = []
         for _ in range(n_times):
@@ -137,7 +150,8 @@ def score(model, data, features, max_players_per_club, dropout, dropout_type, n_
                 dropout=dropout,
                 dropout_type=dropout_type,
             )
-            rnd_scores.append(rnd_score)
+            rnd_score_norm = (rnd_score - pop) / (best - pop)
+            rnd_scores.append(rnd_score_norm)
 
         scores.append(np.mean(rnd_scores))
 
@@ -155,6 +169,8 @@ class Objective:
     dropout: float
     dropout_type: int
     n_times: int
+    populars: pd.DataFrame
+    bests: pd.DataFrame
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
@@ -191,6 +207,8 @@ class Objective:
             dropout=self.dropout,
             dropout_type=self.dropout_type,
             n_times=self.n_times,
+            populars=self.populars,
+            bests=self.bests,
         )
 
 
@@ -220,7 +238,7 @@ def main(
     logging.info("Timeout: %s", timeout)
     logging.info("Max Players per Club: %s", max_players_per_club)
     logging.info("Dropout: %s", dropout)
-    logging.info("Dropout type: %s", dropout)
+    logging.info("Dropout type: %s", dropout_type)
     logging.info("Number of Times: %s", n_times)
     logging.info("Notes: %s", notes)
     logging.info("Tags: %s", tags)
@@ -232,6 +250,7 @@ def main(
             "timeout": timeout,
             "max_players_per_club": max_players_per_club,
             "dropout": dropout,
+            "dropout_type": dropout_type,
             "n_times": n_times,
         }
     )
@@ -245,9 +264,15 @@ def main(
     artifact.add_file("query.sql", name="query.sql.txt")
     wandb.log_artifact(artifact)
 
+    # Read reference data
+    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
+    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
+
+    # Filter features that will be used for training.
     features = [col for col in data.columns if col not in COLS_TO_NOT_TRAIN_ON]
 
-    rounds = [group for i, group in data.groupby([SEASON_COL, ROUND_COL], sort=True)]
+    # Split datasets.
+    rounds = [group for _, group in data.groupby([SEASON_COL, ROUND_COL], sort=True)]
     train = pd.concat(rounds[:-38])
     valid = pd.concat(rounds[-38:-19])
     test = pd.concat(rounds[-19:])
@@ -261,6 +286,8 @@ def main(
         dropout=dropout,
         dropout_type=dropout_type,
         n_times=n_times,
+        populars=populars,
+        bests=bests,
     )
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
@@ -322,6 +349,8 @@ def main(
         dropout=dropout,
         dropout_type=dropout_type,
         n_times=n_times,
+        populars=populars,
+        bests=bests,
     )
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
