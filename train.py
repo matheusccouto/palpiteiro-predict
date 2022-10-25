@@ -25,7 +25,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(stream=sys.stdout)],
 )
 warnings.simplefilter("ignore")
-# optuna.logging.set_verbosity(optuna.logging.WARN)
+optuna.logging.set_verbosity(optuna.logging.WARN)
 
 # pylint: disable=invalid-name,too-many-arguments,too-many-locals,too-many-instance-attributes
 
@@ -80,6 +80,15 @@ MODEL = lgbm.LGBMRegressor(
 )
 
 
+def logging_callback(study, frozen_trial):
+    """Optuna logging callback."""
+    logging.info(
+        "Trial %04d finished with best value: %.3f ",
+        frozen_trial.number,
+        frozen_trial.value,
+    )
+
+
 def draft(data, max_players_per_club, dropout, dropout_type):
     """Simulate a Cartola FC season."""
     line_up = {pos: [] for pos in SCHEME}
@@ -95,7 +104,9 @@ def draft(data, max_players_per_club, dropout, dropout_type):
             )
         elif "club" in dropout_type:
             data = data[
-                data["club"].isin(data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout))
+                data["club"].isin(
+                    data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout)
+                )
             ]
         else:
             raise ValueError(f"Could not understant dropout type: {dropout_type}")
@@ -290,7 +301,12 @@ def main(
         bests=bests,
     )
     study = optuna.create_study(direction="maximize")
-    study.optimize(obj, n_trials=n_trials, timeout=timeout)
+    study.optimize(
+        obj,
+        n_trials=n_trials,
+        timeout=timeout,
+        callbacks=[logging_callback],
+    )
     valid_score = study.best_value
 
     wandb.log({"validation_scoring": valid_score})
