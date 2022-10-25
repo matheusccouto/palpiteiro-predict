@@ -1,9 +1,9 @@
 """Run experiment."""
 
 import argparse
-import concurrent.futures
 import json
 import logging
+from multiprocessing.sharedctypes import Value
 import os
 import sys
 import warnings
@@ -17,7 +17,6 @@ import optuna
 import optuna.logging
 import optuna.visualization
 import pandas as pd
-import requests
 import wandb
 
 
@@ -29,7 +28,7 @@ logging.basicConfig(
 warnings.simplefilter("ignore")
 # optuna.logging.set_verbosity(optuna.logging.WARN)
 
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name,too-many-arguments
 
 # Paths
 THIS_DIR = os.path.dirname(__file__)
@@ -37,14 +36,15 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 
 # Default Args
 MAX_PLYRS_P_CLUB = 5
-DROPOUT = 0.0
+DROPOUT = 0.1
 DROPOUT_TYPE = "all"
-N_TIMES = 1
-N_TRIALS = 10
+N_TIMES = 10
+N_TRIALS = 100
 TIMEOUT = None
 
 # Columns naming.
 TARGET_COL = "total_points"
+PRED_COL = "total_points_pred"
 ID_COL = "player_id"
 SEASON_COL = "season"
 ROUND_COL = "round"
@@ -64,6 +64,16 @@ COLS_TO_NOT_TRAIN_ON = [
     POSITION_COL,
 ]
 
+# Scheme to use on drafting
+SCHEME = {
+    "goalkeeper": 1,
+    "fullback": 2,
+    "defender": 2,
+    "midfielder": 3,
+    "forward": 3,
+    "coach": 0,
+}
+
 # Base Model
 MODEL = lgbm.LGBMRegressor(
     n_estimators=100,
@@ -71,55 +81,41 @@ MODEL = lgbm.LGBMRegressor(
 )
 
 
-# TODO do a greedy draft for tuning only
-def draft(data, max_players_per_club, dropout, dropout_type=None):
+def draft(data, max_players_per_club, dropout, dropout_type):
     """Simulate a Cartola FC season."""
-    scheme = {
-        "goalkeeper": 1,
-        "fullback": 2,
-        "defender": 2,
-        "midfielder": 3,
-        "forward": 3,
-        "coach": 0,
-    }
-    mapping = {
-        ID_COL: "id",
-        CLUB_COL: "club",
-        POSITION_COL: "position",
-        PRICE_COL: "price",
-        TARGET_COL: "actual_points",
-        "points": "points",
-    }
-    data = data.rename(mapping, axis=1)[list(mapping.values())].to_dict(
-        orient="records"
-    )
-    body = {
-        "game": "custom",
-        "scheme": scheme,
-        "price": 140,
-        "max_players_per_club": max_players_per_club,
-        "bench": False,
-        "dropout": dropout,
-        "dropout_type": dropout_type,
-        "players": data,
-    }
-    res = requests.post(
-        os.getenv("DRAFT_URL"),
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": os.getenv("DRAFT_KEY"),
-        },
-        data=json.dumps(body, cls=DecimalEncoder),
-        timeout=30,
-    )
-    if res.status_code >= 300:
-        raise ValueError(res.text)
+    line_up = {pos: [] for pos in SCHEME}
+    clubs = {club: 0 for club in data[CLUB_COL].unique()}
+    count = 0
 
-    content = json.loads(res.content.decode())
-    if content["status"] == "FAILED":
-        raise ValueError(content["cause"])
+    if "all" in dropout_type:
+        data = data.sample(frac=1 - dropout)
+    elif "position" in dropout_type:
+        data = data.groupby(POSITION_COL, group_keys=False).apply(
+            lambda x: x.sample(frac=1 - dropout)
+        )
+    elif "club" in dropout_type:
+        data = data[
+            data["club"].isin(data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout))
+        ]
+    else:
+        raise ValueError(f"Could not understant dropout type: {dropout_type}")
 
-    return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
+    for _, player in data.sort_values(PRED_COL, ascending=False).iterrows():
+
+        if len(line_up[player[POSITION_COL]]) >= SCHEME[player[POSITION_COL]]:
+            continue
+
+        if clubs[player[CLUB_COL]] >= max_players_per_club:
+            continue
+
+        line_up[player[POSITION_COL]].append(player[TARGET_COL])
+        count += 1
+        clubs[player[CLUB_COL]] += 1
+
+        if count > 11:
+            break
+
+    return sum(player for position in line_up.values() for player in position)
 
 
 def fit(model, data, features):
@@ -129,23 +125,21 @@ def fit(model, data, features):
 
 def score(model, data, features, max_players_per_club, dropout, dropout_type, n_times):
     """Make predictions and evaluate how many points would have been scored."""
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    scores = []
+    for _, rnd in data.groupby([SEASON_COL, ROUND_COL]):
+        rnd[PRED_COL] = model.predict(rnd[features].astype("float32"))
 
-        futures = []
-        for _, rnd in data.groupby([SEASON_COL, ROUND_COL]):
-            rnd["actual_points"] = rnd[TARGET_COL]
-            rnd["points"] = model.predict(rnd[features].astype("float32"))
-            for _ in range(n_times):
-                future = executor.submit(
-                    draft,
-                    data=rnd,
-                    max_players_per_club=max_players_per_club,
-                    dropout=dropout,
-                    dropout_type=dropout_type,
-                )
-                futures.append(future)
+        rnd_scores = []
+        for _ in range(n_times):
+            rnd_score = draft(
+                data=rnd,
+                max_players_per_club=max_players_per_club,
+                dropout=dropout,
+                dropout_type=dropout_type,
+            )
+            rnd_scores.append(rnd_score)
 
-        scores = [fut.result() for fut in concurrent.futures.as_completed(futures)]
+        scores.append(np.mean(rnd_scores))
 
     return np.mean(scores)
 
@@ -157,6 +151,10 @@ class Objective:
     train: pd.DataFrame
     test: pd.DataFrame
     features: List[str]
+    max_players_per_club: int
+    dropout: float
+    dropout_type: int
+    n_times: int
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
@@ -189,10 +187,10 @@ class Objective:
             model=MODEL,
             data=self.test,
             features=selected_features,
-            max_players_per_club=MAX_PLYRS_P_CLUB,
-            dropout=DROPOUT,
-            dropout_type=DROPOUT_TYPE,
-            n_times=N_TIMES,
+            max_players_per_club=self.max_players_per_club,
+            dropout=self.dropout,
+            dropout_type=self.dropout_type,
+            n_times=self.n_times,
         )
 
 
@@ -209,7 +207,7 @@ class DecimalEncoder(json.JSONEncoder):
 def main(
     n_trials,
     timeout,
-    max_plyrs_per_club,
+    max_players_per_club,
     dropout,
     dropout_type,
     n_times,
@@ -220,7 +218,7 @@ def main(
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
     logging.info("Timeout: %s", timeout)
-    logging.info("Max Players per Club: %s", max_plyrs_per_club)
+    logging.info("Max Players per Club: %s", max_players_per_club)
     logging.info("Dropout: %s", dropout)
     logging.info("Dropout type: %s", dropout)
     logging.info("Number of Times: %s", n_times)
@@ -232,7 +230,7 @@ def main(
         {
             "n_trials": n_trials,
             "timeout": timeout,
-            "max_players_per_club": max_plyrs_per_club,
+            "max_players_per_club": max_players_per_club,
             "dropout": dropout,
             "n_times": n_times,
         }
@@ -255,7 +253,15 @@ def main(
     test = pd.concat(rounds[-19:])
 
     # Hyperparams tuning with optuna.
-    obj = Objective(train, valid, features, max_plyrs_per_club, dropout, dropout_type, n_times)
+    obj = Objective(
+        train=train,
+        test=valid,
+        features=features,
+        max_players_per_club=max_players_per_club,
+        dropout=dropout,
+        dropout_type=dropout_type,
+        n_times=n_times,
+    )
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
     valid_score = study.best_value
@@ -312,7 +318,7 @@ def main(
         model=MODEL,
         data=test,
         features=selected_features,
-        max_players_per_club=max_plyrs_per_club,
+        max_players_per_club=max_players_per_club,
         dropout=dropout,
         dropout_type=dropout_type,
         n_times=n_times,
@@ -330,6 +336,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-players-per-club", default=MAX_PLYRS_P_CLUB, type=int)
     parser.add_argument("--dropout", default=DROPOUT, type=float)
+    parser.add_argument("--dropout-type", default=DROPOUT_TYPE, type=str)
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
@@ -340,8 +347,9 @@ if __name__ == "__main__":
     main(
         n_trials=args.n_trials,
         timeout=args.timeout,
-        max_plyrs_per_club=args.max_players_per_club,
+        max_players_per_club=args.max_players_per_club,
         dropout=args.dropout,
+        dropout_type=args.dropout_type,
         n_times=args.n_times,
         tags=[t for group in args.tags for t in group],
         notes=args.message,
