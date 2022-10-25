@@ -80,10 +80,10 @@ MODEL = lgbm.LGBMRegressor(
 )
 
 
-def logging_callback(study, frozen_trial):
+def logging_callback(study, frozen_trial):  # pylint: disable=unused-argument
     """Optuna logging callback."""
     logging.info(
-        "Trial %04d finished with best value: %.3f ",
+        "Trial %04d finished with value: %.3f ",
         frozen_trial.number,
         frozen_trial.value,
     )
