@@ -36,7 +36,7 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 # Default Args
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
-DROPOUT_TYPE = "position"
+DROPOUT_TYPE = "club"
 N_TIMES = 1
 N_TRIALS = 100
 TIMEOUT = None
