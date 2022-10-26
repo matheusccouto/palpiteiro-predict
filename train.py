@@ -36,7 +36,7 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 # Default Args
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
-DROPOUT_TYPE = "club"
+DROPOUT_TYPE = "club_position"
 N_TIMES = 1
 N_TRIALS = 100
 TIMEOUT = None
@@ -96,20 +96,21 @@ def draft(data, max_players_per_club, dropout, dropout_type):
     count = 0
 
     if dropout:
+
         if "all" in dropout_type:
             data = data.sample(frac=1 - dropout)
-        elif "position" in dropout_type:
-            data = data.groupby(POSITION_COL, group_keys=False).apply(
-                lambda x: x.sample(frac=1 - dropout)
-            )
-        elif "club" in dropout_type:
+
+        if "club" in dropout_type:
             data = data[
                 data["club"].isin(
                     data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout)
                 )
             ]
-        else:
-            raise ValueError(f"Could not understant dropout type: {dropout_type}")
+
+        if "position" in dropout_type:
+            data = data.groupby(POSITION_COL, group_keys=False).apply(
+                lambda x: x.sample(frac=1 - dropout)
+            )
 
     for _, player in data.sort_values(PRED_COL, ascending=False).iterrows():
 
@@ -176,9 +177,6 @@ class Objective:
     train: pd.DataFrame
     test: pd.DataFrame
     features: List[str]
-    max_players_per_club: int
-    dropout: float
-    dropout_type: int
     n_times: int
     populars: pd.DataFrame
     bests: pd.DataFrame
@@ -209,17 +207,25 @@ class Objective:
             if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
+        MODEL.set_params(**params)
         fit(MODEL, self.train, selected_features)
+
+        draft_params = dict(
+            max_players_per_club=trial.suggest_int("draft__max_players_per_club", 1, 5),
+            dropout=trial.suggest_float("draft__dropout", 0.01, 1),
+            dropout_type=trial.suggest_categorical(
+                "draft__dropout_type", ["all", "position", "club", "position_club"]
+            ),
+        )
+
         return score(
             model=MODEL,
             data=self.test,
             features=selected_features,
-            max_players_per_club=self.max_players_per_club,
-            dropout=self.dropout,
-            dropout_type=self.dropout_type,
             n_times=self.n_times,
             populars=self.populars,
             bests=self.bests,
+            **draft_params,
         )
 
 
@@ -236,9 +242,6 @@ class DecimalEncoder(json.JSONEncoder):
 def main(
     n_trials,
     timeout,
-    max_players_per_club,
-    dropout,
-    dropout_type,
     n_times,
     tags,
     notes,
@@ -247,9 +250,6 @@ def main(
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
     logging.info("Timeout: %s", timeout)
-    logging.info("Max Players per Club: %s", max_players_per_club)
-    logging.info("Dropout: %s", dropout)
-    logging.info("Dropout type: %s", dropout_type)
     logging.info("Number of Times: %s", n_times)
     logging.info("Notes: %s", notes)
     logging.info("Tags: %s", tags)
@@ -259,9 +259,6 @@ def main(
         {
             "n_trials": n_trials,
             "timeout": timeout,
-            "max_players_per_club": max_players_per_club,
-            "dropout": dropout,
-            "dropout_type": dropout_type,
             "n_times": n_times,
         }
     )
@@ -284,18 +281,15 @@ def main(
 
     # Split datasets.
     rounds = [group for _, group in data.groupby([SEASON_COL, ROUND_COL], sort=True)]
-    train = pd.concat(rounds[:-38])
-    valid = pd.concat(rounds[-38:-19])
-    test = pd.concat(rounds[-19:])
+    train = pd.concat(rounds[:-76])
+    valid = pd.concat(rounds[-76:-38])
+    test = pd.concat(rounds[-38:])
 
     # Hyperparams tuning with optuna.
     obj = Objective(
         train=train,
         test=valid,
         features=features,
-        max_players_per_club=max_players_per_club,
-        dropout=dropout,
-        dropout_type=dropout_type,
         n_times=n_times,
         populars=populars,
         bests=bests,
@@ -316,9 +310,10 @@ def main(
     best_params = {
         key: val
         for key, val in study.best_params.items()
-        if not key.startswith("col__")
+        if not key.startswith("col__") and not key.startswith("draft__")
     }
     wandb.log({"params": pd.DataFrame(best_params, index=[0])})
+
     best_features = {
         key: val for key, val in study.best_params.items() if key.startswith("col__")
     }
@@ -333,6 +328,13 @@ def main(
     selected_features = [
         col.replace("col__", "") for col, val in best_features.items() if val
     ]
+
+    best_draft_params = {
+        key.replace("draft__", ""): val
+        for key, val in study.best_params.items()
+        if key.startswith("draft__")
+    }
+    wandb.log({"draft_params": pd.DataFrame(best_draft_params, index=[0])})
 
     # Optuna plots
     wandb.log(
@@ -361,12 +363,10 @@ def main(
         model=MODEL,
         data=test,
         features=selected_features,
-        max_players_per_club=max_players_per_club,
-        dropout=dropout,
-        dropout_type=dropout_type,
         n_times=n_times,
         populars=populars,
         bests=bests,
+        **best_draft_params,
     )
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
@@ -379,9 +379,6 @@ def main(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-players-per-club", default=MAX_PLYRS_P_CLUB, type=int)
-    parser.add_argument("--dropout", default=DROPOUT, type=float)
-    parser.add_argument("--dropout-type", default=DROPOUT_TYPE, type=str)
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
@@ -392,9 +389,6 @@ if __name__ == "__main__":
     main(
         n_trials=args.n_trials,
         timeout=args.timeout,
-        max_players_per_club=args.max_players_per_club,
-        dropout=args.dropout,
-        dropout_type=args.dropout_type,
         n_times=args.n_times,
         tags=[t for group in args.tags for t in group],
         notes=args.message,

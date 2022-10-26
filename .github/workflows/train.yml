@@ -43,9 +43,6 @@ jobs:
         run: |
           python train.py \
           --n-trials 1000 \
-          --max-players-per-club 5 \
-          --dropout 0.1 \
-          --dropout-type club \
           --n-times 50 \
           -t 'train.yml'
         env:
