@@ -38,12 +38,13 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 # Default Args
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
+DROPOUT_TYPE = "club and position"
 N_TIMES = 1
 N_TRIALS = 10
 TIMEOUT = None
 
 # Columns
-TARGET_COL = "tier"
+TARGET_COL = "total_points"
 POINTS_COL = "total_points"
 ID_COL = "player_id"
 SEASON_COL = "season"
@@ -56,10 +57,10 @@ POSITION_ID_COL = "position_id"
 
 # Base Model
 K = 20
-MODEL = lgbm.LGBMRanker(
+MODEL = lgbm.LGBMRegressor(
     n_estimators=100,
     n_jobs=-1,
-    objective="rank_xendcg",
+    objective="poisson",
 )
 
 
@@ -72,8 +73,9 @@ def fit(model, X, y, q):
 
     model.fit(
         X,
-        y.clip(0, 30).round(0).astype("int32"),
-        group=q,
+        y,
+        # y.clip(0, 30).round(0).astype("int32"),
+        # group=q,
         categorical_feature=cats,
     )
 
@@ -151,7 +153,7 @@ class DecimalEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def draft(data, max_players_per_club, dropout):
+def draft(data, max_players_per_club, dropout, dropout_type):
     """Simulate a Cartola FC season."""
     scheme = {
         "goalkeeper": 1,
@@ -168,6 +170,7 @@ def draft(data, max_players_per_club, dropout):
         "max_players_per_club": max_players_per_club,
         "bench": False,
         "dropout": dropout,
+        "dropout_type": dropout_type,
         "players": data.to_dict(orient="records"),
     }
     res = requests.post(
@@ -198,13 +201,14 @@ def estimate_prize(x):
     )
 
 
-def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes):
+def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, k, tags, notes):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
     logging.info("Timeout: %s", timeout)
     logging.info("Max Players per Club: %s", max_plyrs_per_club)
     logging.info("Dropout: %s", dropout)
+    logging.info("Dropout Type: %s", dropout_type)
     logging.info("Number of Times: %s", n_times)
     logging.info("NDCG K: %s", k)
     logging.info("Notes: %s", notes)
@@ -217,6 +221,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
             "timeout": timeout,
             "max_players_per_club": max_plyrs_per_club,
             "dropout": dropout,
+            "dropout_type": dropout_type,
             "n_times": n_times,
             "k": k,
         }
@@ -359,10 +364,10 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
-        # if not (
-        #     idx[0] in prizes["season"].unique() and idx[1] in prizes["round"].unique()
-        # ):
-        #     continue
+        if not (
+            idx[0] in prizes["season"].unique() and idx[1] in prizes["round"].unique()
+        ):
+            continue
 
         # Data for this specifc round.
         rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
@@ -383,7 +388,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout))
+                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout, dropout_type))
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
@@ -507,6 +512,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-players-per-club", default=MAX_PLYRS_P_CLUB, type=int)
     parser.add_argument("--dropout", default=DROPOUT, type=float)
+    parser.add_argument("--dropout-type", default=DROPOUT_TYPE, type=str)
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
@@ -520,6 +526,7 @@ if __name__ == "__main__":
         timeout=args.timeout,
         max_plyrs_per_club=args.max_players_per_club,
         dropout=args.dropout,
+        dropout_type=args.dropout_type,
         n_times=args.n_times,
         k=args.k,
         tags=[t for group in args.tags for t in group],
