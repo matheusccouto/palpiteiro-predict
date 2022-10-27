@@ -17,6 +17,7 @@ import optuna.logging
 import optuna.visualization
 import pandas as pd
 import wandb
+from sklearn.metrics import ndcg_score, r2_score
 
 
 logging.basicConfig(
@@ -38,7 +39,7 @@ MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
 DROPOUT_TYPE = "club_position"
 N_TIMES = 1
-N_TRIALS = 100
+N_TRIALS = 10
 TIMEOUT = None
 
 # Columns naming.
@@ -135,7 +136,18 @@ def fit(model, data, features):
     model.fit(data[features].astype("float32"), data[TARGET_COL])
 
 
-def score(
+def score(model, data, features):
+    """Make predictions and evaluate how many points would have been scored."""
+    scores = []
+    for _, rnd in data.groupby([SEASON_COL, ROUND_COL]):
+        y_true = model.predict(rnd[features].astype("float32"))
+        y_test = rnd[TARGET_COL].astype("float32")
+        scores.append(r2_score(y_true, y_test))
+
+    return np.mean(scores)
+
+
+def simulate(
     model,
     data,
     features,
@@ -177,11 +189,9 @@ class Objective:
     train: pd.DataFrame
     test: pd.DataFrame
     features: List[str]
-    n_times: int
-    populars: pd.DataFrame
-    bests: pd.DataFrame
 
     def __call__(self, trial: optuna.Trial):
+
         params = dict(
             boosting_type=trial.suggest_categorical(
                 "boosting_type", ["gbdt", "dart", "goss"]
@@ -210,22 +220,37 @@ class Objective:
         MODEL.set_params(**params)
         fit(MODEL, self.train, selected_features)
 
-        draft_params = dict(
-            max_players_per_club=trial.suggest_int("draft__max_players_per_club", 1, 5),
-            dropout=trial.suggest_float("draft__dropout", 0.01, 1),
+        return score(model=MODEL, data=self.test, features=selected_features)
+
+
+@dataclass
+class DraftObjective:
+    """Optuna objective."""
+
+    data: pd.DataFrame
+    features: List[str]
+    n_times: int
+    populars: pd.DataFrame
+    bests: pd.DataFrame
+
+    def __call__(self, trial: optuna.Trial):
+
+        params = dict(
             dropout_type=trial.suggest_categorical(
-                "draft__dropout_type", ["all", "position", "club", "position_club"]
+                "dropout_type", ["all", "club", "position", "club_position"]
             ),
+            dropout=trial.suggest_float("dropout", 0.05, 0.95),
+            max_players_per_club=trial.suggest_int("max_players_per_club", 1, 5),
         )
 
-        return score(
+        return simulate(
             model=MODEL,
-            data=self.test,
-            features=selected_features,
+            data=self.data,
+            features=self.features,
             n_times=self.n_times,
             populars=self.populars,
             bests=self.bests,
-            **draft_params,
+            **params,
         )
 
 
@@ -261,7 +286,7 @@ def main(
             "timeout": timeout,
             "n_times": n_times,
         }
-    )
+    )g
 
     # Read data
     with open(QUERY, encoding="utf-8") as file:
@@ -286,14 +311,7 @@ def main(
     test = pd.concat(rounds[-38:])
 
     # Hyperparams tuning with optuna.
-    obj = Objective(
-        train=train,
-        test=valid,
-        features=features,
-        n_times=n_times,
-        populars=populars,
-        bests=bests,
-    )
+    obj = Objective(train=train, test=valid, features=features)
     study = optuna.create_study(direction="maximize")
     study.optimize(
         obj,
@@ -359,17 +377,30 @@ def main(
     MODEL.set_params(**best_params)
     train_valid = pd.concat((train, valid))
     fit(MODEL, train_valid, selected_features)
-    test_score = score(
-        model=MODEL,
-        data=test,
-        features=selected_features,
-        n_times=n_times,
-        populars=populars,
-        bests=bests,
-        **best_draft_params,
-    )
+    test_score = score(model=MODEL, data=test, features=selected_features)
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
+
+    study = optuna.create_study(direction="maximize")
+    obj = DraftObjective(
+        data=test,
+        features=selected_features,
+        n_times=10,
+        populars=populars,
+        bests=bests
+    )
+    study.optimize(
+        obj,
+        n_trials=n_trials,
+        timeout=timeout,
+        callbacks=[logging_callback],
+    )
+    logging.info("dropout type: %s", study.best_params["dropout_type"])
+    logging.info("dropout: %.3f", study.best_params["dropout"])
+    logging.info("max players per club: %s", study.best_params["max_players_per_club"])
+    wandb.log({"simulation": study.best_params})
+    wandb.log({"testing simulation": study.best_value})
+    logging.info("testing simulation: %.3f", study.best_value)
 
     # Retrain model on all datasets and export it.
     fit(MODEL, data, selected_features)
