@@ -38,12 +38,13 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 # Default Args
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.0
+DROPOUT_TYPE = "position_club"
 N_TIMES = 1
 N_TRIALS = 10
 TIMEOUT = None
 
 # Columns
-TARGET_COL = "tier"
+TARGET_COL = "total_points"
 POINTS_COL = "total_points"
 ID_COL = "player_id"
 SEASON_COL = "season"
@@ -56,10 +57,9 @@ POSITION_ID_COL = "position_id"
 
 # Base Model
 K = 20
-MODEL = lgbm.LGBMRanker(
+MODEL = lgbm.LGBMRegressor(
     n_estimators=100,
     n_jobs=-1,
-    objective="rank_xendcg",
 )
 
 
@@ -72,8 +72,9 @@ def fit(model, X, y, q):
 
     model.fit(
         X,
-        y.clip(0, 30).round(0).astype("int32"),
-        group=q,
+        y,
+        # y.clip(0, 30).round(0).astype("int32"),
+        # group=q,
         categorical_feature=cats,
     )
 
@@ -124,10 +125,6 @@ class Objective:
             colsample_bytree=trial.suggest_float("colsample_bytree", 0.333, 1.0),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e0, log=True),
             reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e0, log=True),
-            # lambdarank_truncation_level=trial.suggest_int(
-            #     "lambdarank_truncation_level", k, 2 * k
-            # ),
-            # lambdarank_norm=trial.suggest_categorical("lambdarank_norm", [True, False]),
         )
         MODEL.set_params(**params)
 
@@ -151,7 +148,7 @@ class DecimalEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def draft(data, max_players_per_club, dropout):
+def draft(data, max_players_per_club, dropout, dropout_type):
     """Simulate a Cartola FC season."""
     scheme = {
         "goalkeeper": 1,
@@ -168,6 +165,7 @@ def draft(data, max_players_per_club, dropout):
         "max_players_per_club": max_players_per_club,
         "bench": False,
         "dropout": dropout,
+        "dropout_type": dropout_type,
         "players": data.to_dict(orient="records"),
     }
     res = requests.post(
@@ -189,22 +187,14 @@ def draft(data, max_players_per_club, dropout):
     return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
 
 
-def estimate_prize(x):
-    """Estimate prize given the normalized points."""
-    return np.clip(
-        1.49470970e-12 * np.exp(5.99746092e01 * x) + -1.28361653e01,
-        0,
-        10000,
-    )
-
-
-def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes):
+def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, k, tags, notes):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
     logging.info("Timeout: %s", timeout)
     logging.info("Max Players per Club: %s", max_plyrs_per_club)
     logging.info("Dropout: %s", dropout)
+    logging.info("Dropout Type: %s", dropout_type)
     logging.info("Number of Times: %s", n_times)
     logging.info("NDCG K: %s", k)
     logging.info("Notes: %s", notes)
@@ -217,6 +207,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
             "timeout": timeout,
             "max_players_per_club": max_plyrs_per_club,
             "dropout": dropout,
+            "dropout_type": dropout_type,
             "n_times": n_times,
             "k": k,
         }
@@ -359,10 +350,10 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     history = []
     for idx, rnd in data.loc[test_index].groupby([SEASON_COL, ROUND_COL]):
 
-        # if not (
-        #     idx[0] in prizes["season"].unique() and idx[1] in prizes["round"].unique()
-        # ):
-        #     continue
+        if not (
+            idx[0] in prizes["season"].unique() and idx[1] in prizes["round"].unique()
+        ):
+            continue
 
         # Data for this specifc round.
         rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
@@ -383,7 +374,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout))
+                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout, dropout_type))
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
@@ -422,18 +413,8 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
             real_prizes = [np.nan]
         draft_scores["prize"] = pd.Series(real_prizes)
 
-        estimated_prizes = (
-            (draft_scores.drop(["max", "mode", "prize"]) - mode_points)
-            / (max_points - mode_points)
-        ).apply(estimate_prize)
-        draft_scores["prize_estimated"] = estimated_prizes
-
         log_str = (
-            "%04d-%02d: %03.1f  "
-            "Mode: %03.1f  "
-            "Max %03.1f  "
-            "Prizes %03.1f  "
-            "Estimated Prize %03.1f"
+            "%04d-%02d: %03.1f  " "Mode: %03.1f  " "Max %03.1f  " "Prizes %03.1f  "
         )
         logging.info(
             log_str,
@@ -443,37 +424,21 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
             mode_points,
             max_points,
             sum(real_prizes),
-            sum(estimated_prizes),
         )
 
         history.append(draft_scores)
 
     history = pd.concat(history, axis=1).transpose()
 
-    history["mean"] = history.drop(
-        columns=["max", "mode", "prize", "prize_estimated"]
-    ).mean(axis=1)
-    overall_mean_score = history["mean"].mean()
-    wandb.log({"Overall Mean Draft": overall_mean_score})
-    logging.info("Overall Mean Draft: %.2f", overall_mean_score)
-
-    overall_mean_max_score = (
-        history.drop(columns=["max", "mode", "prize", "prize_estimated"])
-        .divide(history["max"], axis=0)
+    overall_norm_score = (
+        history.drop(columns=["max", "mode", "prize"])
+        .subtract(history["mode"], axis=0)
+        .divide(history["max"].subtract(history["mode"]), axis=0)
         .mean()
         .mean()
     )
-    wandb.log({"Overall Mean Over Max Draft": overall_mean_max_score})
-    logging.info("Overall Mean Over Max Draft: %.2f", overall_mean_max_score)
-
-    overall_mean_mode_score = (
-        history.drop(columns=["max", "mode", "prize", "prize_estimated"])
-        .divide(history["mode"], axis=0)
-        .mean()
-        .mean()
-    )
-    wandb.log({"Overall Mean Over Mode Draft": overall_mean_mode_score})
-    logging.info("Overall Mean Over Mode Draft: %.2f", overall_mean_mode_score)
+    wandb.log({"Overall Normalized Score": overall_norm_score})
+    logging.info("Overall Normalized Score: %.2f", overall_norm_score)
 
     investment = 10 * sum(prz.dropna().shape[0] for prz in history["prize"])
     overall_roi = (
@@ -481,16 +446,6 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, n_times, k, tags, notes
     ) / investment
     wandb.log({"Overall ROI": overall_roi})
     logging.info("Overall ROI: %.2f", overall_roi)
-
-    investment = 10 * sum(prz.dropna().shape[0] for prz in history["prize_estimated"])
-    overall_estimated_roi = (
-        history["prize_estimated"].apply(lambda x: x.sum(skipna=False)).sum()
-        - investment
-    ) / investment
-    wandb.log({"Overall Estimated ROI": overall_estimated_roi})
-    logging.info("Overall Estimated ROI: %.2f", overall_estimated_roi)
-
-    wandb.log({"simulation": history[["mean", "mode", "max"]].reset_index()})
 
     # Retrain model on all datasets and export it.
     fit(
@@ -507,6 +462,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-players-per-club", default=MAX_PLYRS_P_CLUB, type=int)
     parser.add_argument("--dropout", default=DROPOUT, type=float)
+    parser.add_argument("--dropout-type", default=DROPOUT_TYPE, type=str)
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
@@ -520,6 +476,7 @@ if __name__ == "__main__":
         timeout=args.timeout,
         max_plyrs_per_club=args.max_players_per_club,
         dropout=args.dropout,
+        dropout_type=args.dropout_type,
         n_times=args.n_times,
         k=args.k,
         tags=[t for group in args.tags for t in group],
