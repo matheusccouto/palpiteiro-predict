@@ -44,7 +44,7 @@ N_TRIALS = 10
 TIMEOUT = None
 
 # Columns
-TARGET_COL = "total_points"
+TARGET_COL = "tier"
 POINTS_COL = "total_points"
 ID_COL = "player_id"
 SEASON_COL = "season"
@@ -57,9 +57,10 @@ POSITION_ID_COL = "position_id"
 
 # Base Model
 K = 20
-MODEL = lgbm.LGBMRegressor(
+MODEL = lgbm.LGBMRanker(
     n_estimators=100,
     n_jobs=-1,
+    objective="rank_xendcg",
 )
 
 
@@ -72,9 +73,8 @@ def fit(model, X, y, q):
 
     model.fit(
         X,
-        y,
-        # y.clip(0, 30).round(0).astype("int32"),
-        # group=q,
+        y.clip(0, 30).round(0).astype("int32"),
+        group=q,
         categorical_feature=cats,
     )
 
