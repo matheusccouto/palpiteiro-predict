@@ -15,9 +15,13 @@ on:
         description: Dropout
         required: true
         default: 0.1
+      dropout_type:
+        description: Dropout Type
+        required: true
+        default: position_club
       n_times:
         description: Number of drafts
-        default: 0.1
+        default: 50
       k:
         description: NDCG K
         required: true
@@ -55,6 +59,7 @@ jobs:
           --n-trials {{ github.event.inputs.n_trials }} \
           --max-players-per-club {{ github.event.inputs.max_players_per_club }} \
           --dropout {{ github.event.inputs.dropout }} \
+          --dropout-type {{ github.event.inputs.dropout_type }} \
           --n-times {{ github.event.inputs.n_times }} \
           --k {{ github.event.inputs.k }} \
           -m {{ github.event.inputs.notes }} \
