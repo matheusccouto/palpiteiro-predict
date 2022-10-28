@@ -56,13 +56,13 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials {{ inputs.n_trials }} \
-          --max-players-per-club {{ inputs.max_players_per_club }} \
-          --dropout {{ inputs.dropout }} \
-          --dropout-type {{ inputs.dropout_type }} \
-          --n-times {{ inputs.n_times }} \
-          --k {{ inputs.k }} \
-          -m {{ inputs.notes }} \
+          --n-trials ${{ inputs.n_trials }} \
+          --max-players-per-club ${{ inputs.max_players_per_club }} \
+          --dropout ${{ inputs.dropout }} \
+          --dropout-type ${{ inputs.dropout_type }} \
+          --n-times ${{ inputs.n_times }} \
+          --k ${{ inputs.k }} \
+          -m ${{ inputs.notes }} \
           -t 'experiment.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
