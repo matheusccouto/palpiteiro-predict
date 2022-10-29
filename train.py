@@ -25,7 +25,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(stream=sys.stdout)],
 )
 warnings.simplefilter("ignore")
-# optuna.logging.set_verbosity(optuna.logging.WARN)
+optuna.logging.set_verbosity(optuna.logging.WARN)
 
 # pylint: disable=invalid-name
 
@@ -82,6 +82,15 @@ MODEL = lgbm.LGBMRegressor(
     n_estimators=100,
     n_jobs=-1,
 )
+
+
+def logging_callback(study, frozen_trial):  # pylint: disable=unused-argument
+    """Optuna logging callback."""
+    logging.info(
+        "Trial %04d finished with value: %.3f ",
+        frozen_trial.number,
+        frozen_trial.value,
+    )
 
 
 def draft(data, max_players_per_club, dropout, dropout_type):
@@ -160,7 +169,16 @@ def fit(model, X, y):
 
 
 def score(
-    model, X, y, cols, max_players_per_club, dropout, dropout_type, populars, bests, n_times
+    model,
+    X,
+    y,
+    cols,
+    max_players_per_club,
+    dropout,
+    dropout_type,
+    populars,
+    bests,
+    n_times,
 ):
     """Make predictions."""
     scores = []
@@ -171,7 +189,7 @@ def score(
 
         rnd["points"] = model.predict(rnd[cols].astype("float32"))
         rnd["actual_points"] = y
-        for _  in range(n_times):
+        for _ in range(n_times):
             points = draft(rnd, max_players_per_club, dropout, dropout_type)
             scores.append((points - pop) / (best - pop))
 
@@ -230,7 +248,7 @@ class Objective:
             dropout_type=self.dropout_type,
             populars=self.populars,
             bests=self.bests,
-            n_times=self.n_times
+            n_times=self.n_times,
         )
 
 
@@ -339,10 +357,15 @@ def main(
         dropout_type=dropout_type,
         populars=populars,
         bests=bests,
-        n_times=n_times
+        n_times=n_times,
     )
     study = optuna.create_study(direction="maximize")
-    study.optimize(obj, n_trials=n_trials, timeout=timeout)
+    study.optimize(
+        obj,
+        n_trials=n_trials,
+        timeout=timeout,
+        callbacks=[logging_callback],
+    )
     valid_score = study.best_value
 
     wandb.log({"validation_scoring": valid_score})
