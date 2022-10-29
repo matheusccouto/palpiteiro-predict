@@ -37,9 +37,9 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 
 # Default Args
 MAX_PLYRS_P_CLUB = 5
-DROPOUT = 0.0
+DROPOUT = 0.4
 DROPOUT_TYPE = "position_club"
-N_TIMES = 1
+N_TIMES = 50
 N_TRIALS = 10
 TIMEOUT = None
 
@@ -54,6 +54,16 @@ CLUB_COL = "club"
 PRICE_COL = "price"
 POSITION_COL = "position"
 POSITION_ID_COL = "position_id"
+
+# Scheme to use on drafting
+SCHEME = {
+    "goalkeeper": 1,
+    "fullback": 2,
+    "defender": 2,
+    "midfielder": 3,
+    "forward": 3,
+    "coach": 0,
+}
 
 # Base Model
 K = 20
@@ -149,45 +159,57 @@ class DecimalEncoder(json.JSONEncoder):
 
 
 def draft(data, max_players_per_club, dropout, dropout_type):
-    """Simulate a Cartola FC season."""
-    scheme = {
-        "goalkeeper": 1,
-        "fullback": 2,
-        "defender": 2,
-        "midfielder": 3,
-        "forward": 3,
-        "coach": 0,
-    }
-    body = {
-        "game": "custom",
-        "scheme": scheme,
-        "price": 140,
-        "max_players_per_club": max_players_per_club,
-        "bench": False,
-        "dropout": dropout,
-        "dropout_type": dropout_type,
-        "players": data.to_dict(orient="records"),
-    }
-    res = requests.post(
-        os.getenv("DRAFT_URL"),
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": os.getenv("DRAFT_KEY"),
-        },
-        data=json.dumps(body, cls=DecimalEncoder),
-        timeout=30,
-    )
-    if res.status_code >= 300:
-        raise ValueError(res.text)
+    """Simulate a Cartola express  scoring."""
+    line_up = {pos: [] for pos in SCHEME}
+    clubs = {club: 0 for club in data[CLUB_COL].unique()}
+    count = 0
 
-    content = json.loads(res.content.decode())
-    if content["status"] == "FAILED":
-        raise ValueError(content["cause"])
+    if dropout:
 
-    return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
+        if "all" in dropout_type:
+            data = data.sample(frac=1 - dropout)
+
+        if "club" in dropout_type:
+            data = data[
+                data["club"].isin(
+                    data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout)
+                )
+            ]
+
+        if "position" in dropout_type:
+            data = data.groupby(POSITION_COL, group_keys=False).apply(
+                lambda x: x.sample(frac=1 - dropout)
+            )
+
+    for _, player in data.sort_values("points", ascending=False).iterrows():
+
+        if len(line_up[player[POSITION_COL]]) >= SCHEME[player[POSITION_COL]]:
+            continue
+
+        if clubs[player[CLUB_COL]] >= max_players_per_club:
+            continue
+
+        line_up[player[POSITION_COL]].append(player["actual_points"])
+        count += 1
+        clubs[player[CLUB_COL]] += 1
+
+        if count > 11:
+            break
+
+    return sum(player for position in line_up.values() for player in position)
 
 
-def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, k, tags, notes):
+def main(
+    n_trials,
+    timeout,
+    max_plyrs_per_club,
+    dropout,
+    dropout_type,
+    n_times,
+    k,
+    tags,
+    notes,
+):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
@@ -371,10 +393,14 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
         rnd["points"] = np.exp(rnd["points"])
 
         # Make several concurrent calls agains the Draft API
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout, dropout_type))
+                futures.append(
+                    executor.submit(
+                        draft, rnd, max_plyrs_per_club, dropout, dropout_type
+                    )
+                )
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
