@@ -17,7 +17,6 @@ import optuna.logging
 import optuna.visualization
 import pandas as pd
 import wandb
-from sklearn.metrics import ndcg_score
 
 
 logging.basicConfig(
@@ -26,7 +25,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(stream=sys.stdout)],
 )
 warnings.simplefilter("ignore")
-optuna.logging.set_verbosity(optuna.logging.WARN)
+# optuna.logging.set_verbosity(optuna.logging.WARN)
 
 # pylint: disable=invalid-name
 
@@ -126,7 +125,7 @@ def draft(data, max_players_per_club, dropout, dropout_type):
     return sum(player for position in line_up.values() for player in position)
 
 
-def fit(model, X, y, q):
+def fit(model, X, y):
     """Fit model."""
     if POSITION_ID_COL in X.columns:
         cats = [POSITION_ID_COL]
@@ -142,34 +141,41 @@ def fit(model, X, y, q):
     )
 
 
-def score(model, X, y, q, k, cols):
-    """Make predictions."""
-    start_idx = q.cumsum().shift().fillna(0).astype("int32")
-    end_idx = q.cumsum()
-
-    y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
-    y_test_rnd = [
-        model.predict(X[cols].iloc[s:e].astype("float32")).tolist()
-        for s, e in zip(start_idx, end_idx)
-    ]
-
-    scores = [
-        ndcg_score([y_true], [y_test], k=k)
-        for y_true, y_test in zip(y_true_rnd, y_test_rnd)
-    ]
-    return np.mean(scores)
-
-
-# def score(model, X, y, cols, max_players_per_club, dropout, dropout_type, populars, bests):
+# def score(model, X, y, q, k, cols):
 #     """Make predictions."""
-#     scores = []
-#     for _, rnd in X.groupby([SEASON_COL, ROUND_COL]):
-#         rnd["points"] = model.predict(rnd[cols].astype("float32"))
-#         rnd["actual_points"] = y
-#         points = draft(rnd, max_players_per_club, dropout, dropout_type)
-#         # points_norm =
+#     start_idx = q.cumsum().shift().fillna(0).astype("int32")
+#     end_idx = q.cumsum()
 
+#     y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
+#     y_test_rnd = [
+#         model.predict(X[cols].iloc[s:e].astype("float32")).tolist()
+#         for s, e in zip(start_idx, end_idx)
+#     ]
+
+#     scores = [
+#         ndcg_score([y_true], [y_test], k=k)
+#         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
+#     ]
 #     return np.mean(scores)
+
+
+def score(
+    model, X, y, cols, max_players_per_club, dropout, dropout_type, populars, bests, n_times
+):
+    """Make predictions."""
+    scores = []
+    for idx, rnd in X.groupby([SEASON_COL, ROUND_COL]):
+
+        pop = populars.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
+        best = bests.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
+
+        rnd["points"] = model.predict(rnd[cols].astype("float32"))
+        rnd["actual_points"] = y
+        for _  in range(n_times):
+            points = draft(rnd, max_players_per_club, dropout, dropout_type)
+            scores.append((points - pop) / (best - pop))
+
+    return np.mean(scores)
 
 
 @dataclass
@@ -178,11 +184,14 @@ class Objective:
 
     X_train: pd.DataFrame
     y_train: pd.Series
-    q_train: pd.Series
     X_test: pd.DataFrame
     y_test: pd.Series
-    q_test: pd.Series
-    k: int
+    max_players_per_club: int
+    dropout: float
+    dropout_type: str
+    populars: pd.DataFrame
+    bests: pd.DataFrame
+    n_times: int
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
@@ -210,8 +219,19 @@ class Objective:
             if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
-        fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
-        return score(MODEL, self.X_test, self.y_test, self.q_test, self.k, cols)
+        fit(MODEL, self.X_train[cols], self.y_train)
+        return score(
+            model=MODEL,
+            X=self.X_test,
+            y=self.y_test,
+            cols=cols,
+            max_players_per_club=self.max_players_per_club,
+            dropout=self.dropout,
+            dropout_type=self.dropout_type,
+            populars=self.populars,
+            bests=self.bests,
+            n_times=self.n_times
+        )
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -256,7 +276,6 @@ def main(
             "dropout": dropout,
             "dropout_type": dropout_type,
             "n_times": n_times,
-            "k": k,
         }
     )
 
@@ -301,14 +320,27 @@ def main(
 
     X_valid = X.loc[valid_index]
     y_valid = y.loc[valid_index]
-    q_valid = groups.loc[valid_index].value_counts(sort=False)
 
     X_test = X.loc[test_index]
     y_test = y.loc[test_index]
-    q_test = groups.loc[test_index].value_counts(sort=False)
+
+    # Read reference data
+    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
+    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
 
     # Hyperparams tuning with optuna.
-    obj = Objective(X_train, y_train, q_train, X_valid, y_valid, q_valid, k)
+    obj = Objective(
+        X_train,
+        y_train,
+        X_valid,
+        y_valid,
+        max_players_per_club=max_plyrs_per_club,
+        dropout=dropout,
+        dropout_type=dropout_type,
+        populars=populars,
+        bests=bests,
+        n_times=n_times
+    )
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=n_trials, timeout=timeout)
     valid_score = study.best_value
@@ -361,9 +393,19 @@ def main(
         MODEL,
         pd.concat((X_train, X_valid))[selected_cols],
         pd.concat((y_train, y_valid)),
-        pd.concat((q_train, q_valid)),
     )
-    test_score = score(MODEL, X_test[selected_cols], y_test, q_test, k, selected_cols)
+    test_score = score(
+        MODEL,
+        X_test,
+        y_test,
+        cols=selected_cols,
+        max_players_per_club=max_plyrs_per_club,
+        dropout=dropout,
+        dropout_type=dropout_type,
+        populars=populars,
+        bests=bests,
+        n_times=n_times,
+    )
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
 
@@ -372,8 +414,6 @@ def main(
     # It will iterate round by round from the test set
     # simulating how would be the scoring of a team drafted using this model.
 
-    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
-    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
     prizes = pd.read_gbq("SELECT * FROM express.fct_prize")
 
     history = []
@@ -487,7 +527,6 @@ def main(
         MODEL,
         pd.concat((X_train, X_valid, X_test))[selected_cols],
         pd.concat((y_train, y_valid, y_test)),
-        pd.concat((q_train, q_valid, q_test)),
     )
     MODEL.booster_.save_model(os.path.join(THIS_DIR, "model.txt"))
 

@@ -42,7 +42,7 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials 1000 \
+          --n-trials 500 \
           --max-players-per-club 5 \
           --dropout 0.1 \
           --dropout-type position_club \
