@@ -16,9 +16,7 @@ import optuna
 import optuna.logging
 import optuna.visualization
 import pandas as pd
-import requests
 import wandb
-from sklearn.metrics import ndcg_score
 
 
 logging.basicConfig(
@@ -37,9 +35,9 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 
 # Default Args
 MAX_PLYRS_P_CLUB = 5
-DROPOUT = 0.0
+DROPOUT = 0.4
 DROPOUT_TYPE = "position_club"
-N_TIMES = 1
+N_TIMES = 50
 N_TRIALS = 10
 TIMEOUT = None
 
@@ -55,6 +53,29 @@ PRICE_COL = "price"
 POSITION_COL = "position"
 POSITION_ID_COL = "position_id"
 
+# Scheme to use on drafting
+SCHEME = {
+    "goalkeeper": 1,
+    "fullback": 2,
+    "defender": 2,
+    "midfielder": 3,
+    "forward": 3,
+    "coach": 0,
+}
+
+# These are the columns that will only be used for the drafting simulation.
+# They must be removed from training data.
+DRAFT_COLS = [
+    ID_COL,
+    # POINTS_COL,
+    # TARGET_COL,
+    SEASON_COL,
+    ROUND_COL,
+    CLUB_COL,
+    POSITION_COL,
+    PRICE_COL,
+]
+
 # Base Model
 K = 20
 MODEL = lgbm.LGBMRegressor(
@@ -63,7 +84,57 @@ MODEL = lgbm.LGBMRegressor(
 )
 
 
-def fit(model, X, y, q):
+def logging_callback(study, frozen_trial):  # pylint: disable=unused-argument
+    """Optuna logging callback."""
+    logging.info(
+        "Trial %04d finished with value: %.3f ",
+        frozen_trial.number,
+        frozen_trial.value,
+    )
+
+
+def draft(data, max_players_per_club, dropout, dropout_type):
+    """Simulate a Cartola express  scoring."""
+    line_up = {pos: [] for pos in SCHEME}
+    clubs = {club: 0 for club in data[CLUB_COL].unique()}
+    count = 0
+
+    if dropout:
+
+        if "all" in dropout_type:
+            data = data.sample(frac=1 - dropout)
+
+        if "club" in dropout_type:
+            data = data[
+                data["club"].isin(
+                    data[CLUB_COL].drop_duplicates().sample(frac=1 - dropout)
+                )
+            ]
+
+        if "position" in dropout_type:
+            data = data.groupby(POSITION_COL, group_keys=False).apply(
+                lambda x: x.sample(frac=1 - dropout)
+            )
+
+    for _, player in data.sort_values("points", ascending=False).iterrows():
+
+        if len(line_up[player[POSITION_COL]]) >= SCHEME[player[POSITION_COL]]:
+            continue
+
+        if clubs[player[CLUB_COL]] >= max_players_per_club:
+            continue
+
+        line_up[player[POSITION_COL]].append(player["actual_points"])
+        count += 1
+        clubs[player[CLUB_COL]] += 1
+
+        if count > 11:
+            break
+
+    return sum(player for position in line_up.values() for player in position)
+
+
+def fit(model, X, y):
     """Fit model."""
     if POSITION_ID_COL in X.columns:
         cats = [POSITION_ID_COL]
@@ -71,28 +142,57 @@ def fit(model, X, y, q):
         cats = "auto"
 
     model.fit(
-        X,
-        y,
+        X.astype("float32"),
+        y.astype("float32"),
         # y.clip(0, 30).round(0).astype("int32"),
         # group=q,
         categorical_feature=cats,
     )
 
 
-def score(model, X, y, q, k):
+# def score(model, X, y, q, k, cols):
+#     """Make predictions."""
+#     start_idx = q.cumsum().shift().fillna(0).astype("int32")
+#     end_idx = q.cumsum()
+
+#     y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
+#     y_test_rnd = [
+#         model.predict(X[cols].iloc[s:e].astype("float32")).tolist()
+#         for s, e in zip(start_idx, end_idx)
+#     ]
+
+#     scores = [
+#         ndcg_score([y_true], [y_test], k=k)
+#         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
+#     ]
+#     return np.mean(scores)
+
+
+def score(
+    model,
+    X,
+    y,
+    cols,
+    max_players_per_club,
+    dropout,
+    dropout_type,
+    populars,
+    bests,
+    n_times,
+):
     """Make predictions."""
-    start_idx = q.cumsum().shift().fillna(0).astype("int32")
-    end_idx = q.cumsum()
+    scores = []
+    for idx, rnd in X.groupby([SEASON_COL, ROUND_COL]):
 
-    y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
-    y_test_rnd = [
-        model.predict(X.iloc[s:e]).tolist() for s, e in zip(start_idx, end_idx)
-    ]
+        pop = populars.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
+        best = bests.query(f"season=={idx[0]} and round=={idx[1]}")["points"].iloc[0]
 
-    scores = [
-        ndcg_score([y_true], [y_test], k=k)
-        for y_true, y_test in zip(y_true_rnd, y_test_rnd)
-    ]
+        rnd["points"] = model.predict(rnd[cols].astype("float32"))
+        rnd["actual_points"] = y
+        for _ in range(n_times):
+            points = draft(rnd, max_players_per_club, dropout, dropout_type)
+            scores.append((points - pop) / (best - pop))
+
     return np.mean(scores)
 
 
@@ -102,11 +202,14 @@ class Objective:
 
     X_train: pd.DataFrame
     y_train: pd.Series
-    q_train: pd.Series
     X_test: pd.DataFrame
     y_test: pd.Series
-    q_test: pd.Series
-    k: int
+    max_players_per_club: int
+    dropout: float
+    dropout_type: str
+    populars: pd.DataFrame
+    bests: pd.DataFrame
+    n_times: int
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
@@ -130,12 +233,23 @@ class Objective:
 
         cols = [
             col
-            for col in self.X_train.columns
+            for col in self.X_train.drop(columns=DRAFT_COLS).columns
             if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
-        fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
-        return score(MODEL, self.X_test[cols], self.y_test, self.q_test, self.k)
+        fit(MODEL, self.X_train[cols], self.y_train)
+        return score(
+            model=MODEL,
+            X=self.X_test,
+            y=self.y_test,
+            cols=cols,
+            max_players_per_club=self.max_players_per_club,
+            dropout=self.dropout,
+            dropout_type=self.dropout_type,
+            populars=self.populars,
+            bests=self.bests,
+            n_times=self.n_times,
+        )
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -148,46 +262,17 @@ class DecimalEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def draft(data, max_players_per_club, dropout, dropout_type):
-    """Simulate a Cartola FC season."""
-    scheme = {
-        "goalkeeper": 1,
-        "fullback": 2,
-        "defender": 2,
-        "midfielder": 3,
-        "forward": 3,
-        "coach": 0,
-    }
-    body = {
-        "game": "custom",
-        "scheme": scheme,
-        "price": 140,
-        "max_players_per_club": max_players_per_club,
-        "bench": False,
-        "dropout": dropout,
-        "dropout_type": dropout_type,
-        "players": data.to_dict(orient="records"),
-    }
-    res = requests.post(
-        os.getenv("DRAFT_URL"),
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": os.getenv("DRAFT_KEY"),
-        },
-        data=json.dumps(body, cls=DecimalEncoder),
-        timeout=30,
-    )
-    if res.status_code >= 300:
-        raise ValueError(res.text)
-
-    content = json.loads(res.content.decode())
-    if content["status"] == "FAILED":
-        raise ValueError(content["cause"])
-
-    return sum(p["actual_points"] for p in json.loads(content["output"])["players"])
-
-
-def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, k, tags, notes):
+def main(
+    n_trials,
+    timeout,
+    max_plyrs_per_club,
+    dropout,
+    dropout_type,
+    n_times,
+    k,
+    tags,
+    notes,
+):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
@@ -209,7 +294,6 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
             "dropout": dropout,
             "dropout_type": dropout_type,
             "n_times": n_times,
-            "k": k,
         }
     )
 
@@ -222,25 +306,11 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
     artifact.add_file("query.sql", name="query.sql.txt")
     wandb.log_artifact(artifact)
 
-    # These are the columns that will only be used for the drafting simulation.
-    # They must be removed from training data.
-    draft_cols = [
-        ID_COL,
-        POINTS_COL,
-        TARGET_COL,
-        SEASON_COL,
-        ROUND_COL,
-        CLUB_COL,
-        POSITION_COL,
-        PRICE_COL,
-    ]
-
     # This is a ranking model. It needs to know the groups in order to learn.
     # Groups are expected to be a list of group sizes.
     # This implies that the dataset must be ordered as the groups are together.
     data = data.sort_values(["season", "round"])
     groups = data["round"] + 38 * (data["season"] - data["season"].min())  # Group ID
-    groups = groups.astype("int32")
 
     # Data points where data will be splitted.
     split = [
@@ -256,11 +326,7 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
     test_index = data[(groups >= split[2]) & (groups < split[3])].index
 
     # Split features and target.
-    X = (
-        data.drop(columns=draft_cols)
-        .astype("float32")
-        .astype({POSITION_ID_COL: "int32"})
-    )
+    X = data.drop(columns=TARGET_COL)
     y = data[TARGET_COL]
 
     # Split each dataset into features and targets.
@@ -272,16 +338,34 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
 
     X_valid = X.loc[valid_index]
     y_valid = y.loc[valid_index]
-    q_valid = groups.loc[valid_index].value_counts(sort=False)
 
     X_test = X.loc[test_index]
     y_test = y.loc[test_index]
-    q_test = groups.loc[test_index].value_counts(sort=False)
+
+    # Read reference data
+    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
+    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
 
     # Hyperparams tuning with optuna.
-    obj = Objective(X_train, y_train, q_train, X_valid, y_valid, q_valid, k)
+    obj = Objective(
+        X_train,
+        y_train,
+        X_valid,
+        y_valid,
+        max_players_per_club=max_plyrs_per_club,
+        dropout=dropout,
+        dropout_type=dropout_type,
+        populars=populars,
+        bests=bests,
+        n_times=n_times,
+    )
     study = optuna.create_study(direction="maximize")
-    study.optimize(obj, n_trials=n_trials, timeout=timeout)
+    study.optimize(
+        obj,
+        n_trials=n_trials,
+        timeout=timeout,
+        callbacks=[logging_callback],
+    )
     valid_score = study.best_value
 
     wandb.log({"validation_scoring": valid_score})
@@ -332,9 +416,19 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
         MODEL,
         pd.concat((X_train, X_valid))[selected_cols],
         pd.concat((y_train, y_valid)),
-        pd.concat((q_train, q_valid)),
     )
-    test_score = score(MODEL, X_test[selected_cols], y_test, q_test, k)
+    test_score = score(
+        MODEL,
+        X_test,
+        y_test,
+        cols=selected_cols,
+        max_players_per_club=max_plyrs_per_club,
+        dropout=dropout,
+        dropout_type=dropout_type,
+        populars=populars,
+        bests=bests,
+        n_times=n_times,
+    )
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
 
@@ -343,8 +437,6 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
     # It will iterate round by round from the test set
     # simulating how would be the scoring of a team drafted using this model.
 
-    populars = pd.read_gbq("SELECT * FROM express.fct_popular_points")
-    bests = pd.read_gbq("SELECT * FROM express.fct_best_expected_points")
     prizes = pd.read_gbq("SELECT * FROM express.fct_prize")
 
     history = []
@@ -356,7 +448,9 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
             continue
 
         # Data for this specifc round.
-        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
+        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(
+            X.loc[rnd.index][selected_cols].astype("float32")
+        )
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
@@ -371,10 +465,14 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
         rnd["points"] = np.exp(rnd["points"])
 
         # Make several concurrent calls agains the Draft API
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(executor.submit(draft, rnd, max_plyrs_per_club, dropout, dropout_type))
+                futures.append(
+                    executor.submit(
+                        draft, rnd, max_plyrs_per_club, dropout, dropout_type
+                    )
+                )
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
@@ -452,7 +550,6 @@ def main(n_trials, timeout, max_plyrs_per_club, dropout, dropout_type, n_times, 
         MODEL,
         pd.concat((X_train, X_valid, X_test))[selected_cols],
         pd.concat((y_train, y_valid, y_test)),
-        pd.concat((q_train, q_valid, q_test)),
     )
     MODEL.booster_.save_model(os.path.join(THIS_DIR, "model.txt"))
 
