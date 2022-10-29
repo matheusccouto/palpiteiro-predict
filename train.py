@@ -149,7 +149,8 @@ def score(model, X, y, q, k, cols):
 
     y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
     y_test_rnd = [
-        model.predict(X[cols].iloc[s:e].astype("float32")).tolist() for s, e in zip(start_idx, end_idx)
+        model.predict(X[cols].iloc[s:e].astype("float32")).tolist()
+        for s, e in zip(start_idx, end_idx)
     ]
 
     scores = [
@@ -166,10 +167,9 @@ def score(model, X, y, q, k, cols):
 #         rnd["points"] = model.predict(rnd[cols].astype("float32"))
 #         rnd["actual_points"] = y
 #         points = draft(rnd, max_players_per_club, dropout, dropout_type)
-#         # points_norm = 
+#         # points_norm =
 
 #     return np.mean(scores)
-
 
 
 @dataclass
@@ -385,7 +385,9 @@ def main(
             continue
 
         # Data for this specifc round.
-        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(X.loc[rnd.index][selected_cols])
+        rnd[f"{POINTS_COL}_pred"] = MODEL.predict(
+            X.loc[rnd.index][selected_cols].astype("float32")
+        )
         mapping = {
             ID_COL: "id",
             CLUB_COL: "club",
