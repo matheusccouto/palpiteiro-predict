@@ -16,7 +16,6 @@ import optuna
 import optuna.logging
 import optuna.visualization
 import pandas as pd
-import requests
 import wandb
 from sklearn.metrics import ndcg_score
 
@@ -65,97 +64,25 @@ SCHEME = {
     "coach": 0,
 }
 
+# These are the columns that will only be used for the drafting simulation.
+# They must be removed from training data.
+DRAFT_COLS = [
+    ID_COL,
+    # POINTS_COL,
+    # TARGET_COL,
+    SEASON_COL,
+    ROUND_COL,
+    CLUB_COL,
+    POSITION_COL,
+    PRICE_COL,
+]
+
 # Base Model
 K = 20
 MODEL = lgbm.LGBMRegressor(
     n_estimators=100,
     n_jobs=-1,
 )
-
-
-def fit(model, X, y, q):
-    """Fit model."""
-    if POSITION_ID_COL in X.columns:
-        cats = [POSITION_ID_COL]
-    else:
-        cats = "auto"
-
-    model.fit(
-        X,
-        y,
-        # y.clip(0, 30).round(0).astype("int32"),
-        # group=q,
-        categorical_feature=cats,
-    )
-
-
-def score(model, X, y, q, k):
-    """Make predictions."""
-    start_idx = q.cumsum().shift().fillna(0).astype("int32")
-    end_idx = q.cumsum()
-
-    y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
-    y_test_rnd = [
-        model.predict(X.iloc[s:e]).tolist() for s, e in zip(start_idx, end_idx)
-    ]
-
-    scores = [
-        ndcg_score([y_true], [y_test], k=k)
-        for y_true, y_test in zip(y_true_rnd, y_test_rnd)
-    ]
-    return np.mean(scores)
-
-
-@dataclass
-class Objective:
-    """Optuna objective."""
-
-    X_train: pd.DataFrame
-    y_train: pd.Series
-    q_train: pd.Series
-    X_test: pd.DataFrame
-    y_test: pd.Series
-    q_test: pd.Series
-    k: int
-
-    def __call__(self, trial: optuna.Trial):
-        params = dict(
-            boosting_type=trial.suggest_categorical(
-                "boosting_type", ["gbdt", "dart", "goss"]
-            ),
-            num_leaves=trial.suggest_int("num_leaves", 2, 2048),
-            max_depth=trial.suggest_int("max_depth", 16, 256),
-            learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True),
-            # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
-            # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
-            min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
-            min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
-            subsample=trial.suggest_float("subsample", 0.333, 1.0),
-            # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.333, 1.0),
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e0, log=True),
-        )
-        MODEL.set_params(**params)
-
-        cols = [
-            col
-            for col in self.X_train.columns
-            if trial.suggest_categorical(f"col__{col}", [True, False])
-        ]
-
-        fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
-        return score(MODEL, self.X_test[cols], self.y_test, self.q_test, self.k)
-
-
-class DecimalEncoder(json.JSONEncoder):
-    """Decimal encoder for JSON."""
-
-    def default(self, o):
-        """Encode Decimal."""
-        if isinstance(o, Decimal):
-            return float(o)
-        return json.JSONEncoder.default(self, o)
 
 
 def draft(data, max_players_per_club, dropout, dropout_type):
@@ -197,6 +124,104 @@ def draft(data, max_players_per_club, dropout, dropout_type):
             break
 
     return sum(player for position in line_up.values() for player in position)
+
+
+def fit(model, X, y, q):
+    """Fit model."""
+    if POSITION_ID_COL in X.columns:
+        cats = [POSITION_ID_COL]
+    else:
+        cats = "auto"
+
+    model.fit(
+        X.astype("float32"),
+        y.astype("float32"),
+        # y.clip(0, 30).round(0).astype("int32"),
+        # group=q,
+        categorical_feature=cats,
+    )
+
+
+def score(model, X, y, q, k, cols):
+    """Make predictions."""
+    start_idx = q.cumsum().shift().fillna(0).astype("int32")
+    end_idx = q.cumsum()
+
+    y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
+    y_test_rnd = [
+        model.predict(X[cols].iloc[s:e].astype("float32")).tolist() for s, e in zip(start_idx, end_idx)
+    ]
+
+    scores = [
+        ndcg_score([y_true], [y_test], k=k)
+        for y_true, y_test in zip(y_true_rnd, y_test_rnd)
+    ]
+    return np.mean(scores)
+
+
+# def score(model, X, y, cols, max_players_per_club, dropout, dropout_type, populars, bests):
+#     """Make predictions."""
+#     scores = []
+#     for _, rnd in X.groupby([SEASON_COL, ROUND_COL]):
+#         rnd["points"] = model.predict(rnd[cols].astype("float32"))
+#         rnd["actual_points"] = y
+#         points = draft(rnd, max_players_per_club, dropout, dropout_type)
+#         # points_norm = 
+
+#     return np.mean(scores)
+
+
+
+@dataclass
+class Objective:
+    """Optuna objective."""
+
+    X_train: pd.DataFrame
+    y_train: pd.Series
+    q_train: pd.Series
+    X_test: pd.DataFrame
+    y_test: pd.Series
+    q_test: pd.Series
+    k: int
+
+    def __call__(self, trial: optuna.Trial):
+        params = dict(
+            boosting_type=trial.suggest_categorical(
+                "boosting_type", ["gbdt", "dart", "goss"]
+            ),
+            num_leaves=trial.suggest_int("num_leaves", 2, 2048),
+            max_depth=trial.suggest_int("max_depth", 16, 256),
+            learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True),
+            # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
+            # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
+            min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
+            min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
+            subsample=trial.suggest_float("subsample", 0.333, 1.0),
+            # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.333, 1.0),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e0, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e0, log=True),
+        )
+        MODEL.set_params(**params)
+
+        cols = [
+            col
+            for col in self.X_train.drop(columns=DRAFT_COLS).columns
+            if trial.suggest_categorical(f"col__{col}", [True, False])
+        ]
+
+        fit(MODEL, self.X_train[cols], self.y_train, self.q_train)
+        return score(MODEL, self.X_test, self.y_test, self.q_test, self.k, cols)
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """Decimal encoder for JSON."""
+
+    def default(self, o):
+        """Encode Decimal."""
+        if isinstance(o, Decimal):
+            return float(o)
+        return json.JSONEncoder.default(self, o)
 
 
 def main(
@@ -244,25 +269,11 @@ def main(
     artifact.add_file("query.sql", name="query.sql.txt")
     wandb.log_artifact(artifact)
 
-    # These are the columns that will only be used for the drafting simulation.
-    # They must be removed from training data.
-    draft_cols = [
-        ID_COL,
-        POINTS_COL,
-        TARGET_COL,
-        SEASON_COL,
-        ROUND_COL,
-        CLUB_COL,
-        POSITION_COL,
-        PRICE_COL,
-    ]
-
     # This is a ranking model. It needs to know the groups in order to learn.
     # Groups are expected to be a list of group sizes.
     # This implies that the dataset must be ordered as the groups are together.
     data = data.sort_values(["season", "round"])
     groups = data["round"] + 38 * (data["season"] - data["season"].min())  # Group ID
-    groups = groups.astype("int32")
 
     # Data points where data will be splitted.
     split = [
@@ -278,11 +289,7 @@ def main(
     test_index = data[(groups >= split[2]) & (groups < split[3])].index
 
     # Split features and target.
-    X = (
-        data.drop(columns=draft_cols)
-        .astype("float32")
-        .astype({POSITION_ID_COL: "int32"})
-    )
+    X = data.drop(columns=TARGET_COL)
     y = data[TARGET_COL]
 
     # Split each dataset into features and targets.
@@ -356,7 +363,7 @@ def main(
         pd.concat((y_train, y_valid)),
         pd.concat((q_train, q_valid)),
     )
-    test_score = score(MODEL, X_test[selected_cols], y_test, q_test, k)
+    test_score = score(MODEL, X_test[selected_cols], y_test, q_test, k, selected_cols)
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
 
