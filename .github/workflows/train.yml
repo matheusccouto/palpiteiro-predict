@@ -45,7 +45,7 @@ jobs:
           --n-trials 500 \
           --max-players-per-club 5 \
           --dropout 0.1 \
-          --dropout-type position_club \
+          --dropout-type club \
           --n-times 50 \
           --k 20 \
           -t 'train.yml'
