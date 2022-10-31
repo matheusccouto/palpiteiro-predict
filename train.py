@@ -79,7 +79,7 @@ DRAFT_COLS = [
 # Base Model
 K = 20
 MODEL = lgbm.LGBMRegressor(
-    n_estimators=1000,
+    n_estimators=500,
     n_jobs=-1,
 )
 
