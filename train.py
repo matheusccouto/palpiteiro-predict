@@ -79,7 +79,7 @@ DRAFT_COLS = [
 # Base Model
 K = 20
 MODEL = lgbm.LGBMRegressor(
-    n_estimators=100,
+    n_estimators=500,
     n_jobs=-1,
 )
 
@@ -150,24 +150,6 @@ def fit(model, X, y):
     )
 
 
-# def score(model, X, y, q, k, cols):
-#     """Make predictions."""
-#     start_idx = q.cumsum().shift().fillna(0).astype("int32")
-#     end_idx = q.cumsum()
-
-#     y_true_rnd = [y.iloc[s:e].values.tolist() for s, e in zip(start_idx, end_idx)]
-#     y_test_rnd = [
-#         model.predict(X[cols].iloc[s:e].astype("float32")).tolist()
-#         for s, e in zip(start_idx, end_idx)
-#     ]
-
-#     scores = [
-#         ndcg_score([y_true], [y_test], k=k)
-#         for y_true, y_test in zip(y_true_rnd, y_test_rnd)
-#     ]
-#     return np.mean(scores)
-
-
 def score(
     model,
     X,
@@ -216,18 +198,18 @@ class Objective:
             boosting_type=trial.suggest_categorical(
                 "boosting_type", ["gbdt", "dart", "goss"]
             ),
-            num_leaves=trial.suggest_int("num_leaves", 2, 2048),
-            max_depth=trial.suggest_int("max_depth", 16, 256),
-            learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True),
+            num_leaves=trial.suggest_int("num_leaves", 2, 4096),
+            max_depth=trial.suggest_int("max_depth", 16, 512),
+            learning_rate=trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
             # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
             # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
             min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
             min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
             subsample=trial.suggest_float("subsample", 0.333, 1.0),
             # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.333, 1.0),
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e0, log=True),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e1, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e1, log=True),
         )
         MODEL.set_params(**params)
 
