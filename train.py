@@ -510,6 +510,7 @@ def main(n_trials, timeout, n_times, k, tags, notes):
         history.drop(columns=["max", "mode", "prize"])
         .subtract(history["mode"], axis=0)
         .divide(history["max"].subtract(history["mode"]), axis=0)
+        .astype("float32")
         .apply(np.exp)
         .mean()
         .mean()
