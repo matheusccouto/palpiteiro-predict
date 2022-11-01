@@ -42,9 +42,8 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials 500 \
+          --n-trials 250 \
           --n-times 50 \
-          --k 20 \
           -t 'train.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}
