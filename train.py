@@ -202,29 +202,28 @@ class Objective:
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
-            # boosting_type=trial.suggest_categorical(
-            #     "boosting_type", ["gbdt", "dart", "goss"]
-            # ),
-            # num_leaves=trial.suggest_int("num_leaves", 2, 4096),
-            # max_depth=trial.suggest_int("max_depth", 16, 512),
-            # learning_rate=trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
-            # # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
-            # # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
-            # min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
-            # min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
-            # subsample=trial.suggest_float("subsample", 0.333, 1.0),
-            # # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
-            # colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
-            # reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e1, log=True),
-            # reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e1, log=True),
+            boosting_type=trial.suggest_categorical(
+                "boosting_type", ["gbdt", "dart", "goss"]
+            ),
+            num_leaves=trial.suggest_int("num_leaves", 2, 4096),
+            max_depth=trial.suggest_int("max_depth", 16, 512),
+            learning_rate=trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
+            # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
+            # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
+            min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
+            min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
+            subsample=trial.suggest_float("subsample", 0.333, 1.0),
+            # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e1, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e1, log=True),
         )
         MODEL.set_params(**params)
 
         cols = [
             col
             for col in self.X_train.drop(columns=DRAFT_COLS).columns
-            if trial.suggest_categorical(f"col__{col}", [True])
-            # if trial.suggest_categorical(f"col__{col}", [True, False])
+            if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
         fit(MODEL, self.X_train[cols], self.y_train)
