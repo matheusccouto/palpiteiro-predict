@@ -381,7 +381,7 @@ def main(n_trials, timeout, n_times, k, tags, notes):
                 study=study, params=list(best_params.keys())
             ),
             "draft_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
-                study=study, params=list(draft_params.keys())
+                study=study, params=list([f"draft__{key}" for key in draft_params.keys()])
             ),
             "columns_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
                 study=study, params=list(best_cols.keys())
@@ -390,7 +390,7 @@ def main(n_trials, timeout, n_times, k, tags, notes):
                 study=study, params=list(best_params.keys())
             ),
             "draft_importance": optuna.visualization.plot_param_importances(
-                study=study, params=list(draft_params.keys())
+                study=study, params=list([f"draft__{key}" for key in draft_params.keys()])
             ),
             "columns_importance": optuna.visualization.plot_param_importances(
                 study=study, params=list(best_cols.keys())
