@@ -37,7 +37,7 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.4
 DROPOUT_TYPE = "position_club"
-N_TIMES = 50
+N_TIMES = 1
 N_TRIALS = 10
 TIMEOUT = None
 
@@ -80,6 +80,16 @@ DRAFT_COLS = [
 K = 20
 MODEL = lgbm.LGBMRegressor(
     n_estimators=500,
+    boosting_type="goss",
+    num_leaves=1818,
+    max_depth=507,
+    learning_rate=0.0004679,
+    min_child_weight=5,
+    min_child_samples=50,
+    subsample=0.5158,
+    colsample_bytree=0.2476,
+    reg_alpha=0.1495,
+    reg_lambda=0.00153,
     n_jobs=-1,
 )
 
@@ -173,7 +183,7 @@ def score(
         rnd["actual_points"] = y
         for _ in range(n_times):
             points = draft(rnd, max_players_per_club, dropout, dropout_type)
-            scores.append((points - pop) / (best - pop))
+            scores.append(np.exp((points - pop) / (best - pop)))
 
     return np.mean(scores)
 
@@ -192,28 +202,29 @@ class Objective:
 
     def __call__(self, trial: optuna.Trial):
         params = dict(
-            boosting_type=trial.suggest_categorical(
-                "boosting_type", ["gbdt", "dart", "goss"]
-            ),
-            num_leaves=trial.suggest_int("num_leaves", 2, 4096),
-            max_depth=trial.suggest_int("max_depth", 16, 512),
-            learning_rate=trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
-            # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
-            # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
-            min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
-            min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
-            subsample=trial.suggest_float("subsample", 0.333, 1.0),
-            # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e1, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e1, log=True),
+            # boosting_type=trial.suggest_categorical(
+            #     "boosting_type", ["gbdt", "dart", "goss"]
+            # ),
+            # num_leaves=trial.suggest_int("num_leaves", 2, 4096),
+            # max_depth=trial.suggest_int("max_depth", 16, 512),
+            # learning_rate=trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
+            # # subsample_for_bin=trial.suggest_int("subsample_for_bin", 1000, 200000),
+            # # min_split_gain=trial.suggest_float("min_split_gain", 0.0, 1.0),
+            # min_child_weight=trial.suggest_int("min_child_weight", 1, 5),
+            # min_child_samples=trial.suggest_int("min_child_samples", 1, 64),
+            # subsample=trial.suggest_float("subsample", 0.333, 1.0),
+            # # subsample_freq=trial.suggest_float("subsample_freq", 0.0, 1.0),
+            # colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+            # reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 1e1, log=True),
+            # reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 1e1, log=True),
         )
         MODEL.set_params(**params)
 
         cols = [
             col
             for col in self.X_train.drop(columns=DRAFT_COLS).columns
-            if trial.suggest_categorical(f"col__{col}", [True, False])
+            if trial.suggest_categorical(f"col__{col}", [True])
+            # if trial.suggest_categorical(f"col__{col}", [True, False])
         ]
 
         fit(MODEL, self.X_train[cols], self.y_train)
@@ -298,7 +309,6 @@ def main(n_trials, timeout, n_times, k, tags, notes):
 
     X_train = X.loc[train_index]
     y_train = y.loc[train_index]
-    q_train = groups.loc[train_index].value_counts(sort=False)
 
     X_valid = X.loc[valid_index]
     y_valid = y.loc[valid_index]
@@ -355,7 +365,9 @@ def main(n_trials, timeout, n_times, k, tags, notes):
 
     # Apply best params and columns and retrain to score agains test set.
     draft_params = {
-        key: val for key, val in study.best_params.items() if key.startswith("draft__")
+        key.replace("draft__", ""): val
+        for key, val in study.best_params.items()
+        if key.startswith("draft__")
     }
     wandb.log({"draft_params": pd.DataFrame(draft_params, index=[0])})
 
@@ -368,11 +380,17 @@ def main(n_trials, timeout, n_times, k, tags, notes):
             "params_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
                 study=study, params=list(best_params.keys())
             ),
+            "draft_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
+                study=study, params=list(draft_params.keys())
+            ),
             "columns_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
                 study=study, params=list(best_cols.keys())
             ),
             "params_importance": optuna.visualization.plot_param_importances(
                 study=study, params=list(best_params.keys())
+            ),
+            "draft_importance": optuna.visualization.plot_param_importances(
+                study=study, params=list(draft_params.keys())
             ),
             "columns_importance": optuna.visualization.plot_param_importances(
                 study=study, params=list(best_cols.keys())
@@ -492,6 +510,7 @@ def main(n_trials, timeout, n_times, k, tags, notes):
         history.drop(columns=["max", "mode", "prize"])
         .subtract(history["mode"], axis=0)
         .divide(history["max"].subtract(history["mode"]), axis=0)
+        .apply(np.exp)
         .mean()
         .mean()
     )
