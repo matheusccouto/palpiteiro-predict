@@ -7,18 +7,6 @@ on:
         description: Number of trials
         required: true
         default: '250'
-      max_players_per_club:
-        description: Max players per club
-        required: true
-        default: 5
-      dropout:
-        description: Dropout
-        required: true
-        default: 0.1
-      dropout_type:
-        description: Dropout Type
-        required: true
-        default: club
       n_times:
         description: Number of drafts
         default: 50
@@ -52,12 +40,10 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials ${{ inputs.n_trials }} \
-          --max-players-per-club ${{ inputs.max_players_per_club }} \
-          --dropout ${{ inputs.dropout }} \
-          --dropout-type ${{ inputs.dropout_type }} \
-          --n-times ${{ inputs.n_times }} \
-          --k ${{ inputs.k }} \
+          --n-trials {{ github.event.inputs.n_trials }} \
+          --n-times {{ github.event.inputs.n_times }} \
+          --k {{ github.event.inputs.k }} \
+          -m {{ github.event.inputs.notes }} \
           -t 'experiment.yml'
         env:
           DRAFT_URL: ${{ secrets.DRAFT_URL }}

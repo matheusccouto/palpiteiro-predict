@@ -37,7 +37,7 @@ QUERY = os.path.join(THIS_DIR, "query.sql")
 MAX_PLYRS_P_CLUB = 5
 DROPOUT = 0.4
 DROPOUT_TYPE = "position_club"
-N_TIMES = 50
+N_TIMES = 1
 N_TRIALS = 10
 TIMEOUT = None
 
@@ -80,6 +80,16 @@ DRAFT_COLS = [
 K = 20
 MODEL = lgbm.LGBMRegressor(
     n_estimators=500,
+    boosting_type="goss",
+    num_leaves=1818,
+    max_depth=507,
+    learning_rate=0.0004679,
+    min_child_weight=5,
+    min_child_samples=50,
+    subsample=0.5158,
+    colsample_bytree=0.2476,
+    reg_alpha=0.1495,
+    reg_lambda=0.00153,
     n_jobs=-1,
 )
 
@@ -173,7 +183,7 @@ def score(
         rnd["actual_points"] = y
         for _ in range(n_times):
             points = draft(rnd, max_players_per_club, dropout, dropout_type)
-            scores.append((points - pop) / (best - pop))
+            scores.append(np.exp((points - pop) / (best - pop)))
 
     return np.mean(scores)
 
@@ -186,9 +196,6 @@ class Objective:
     y_train: pd.Series
     X_test: pd.DataFrame
     y_test: pd.Series
-    max_players_per_club: int
-    dropout: float
-    dropout_type: str
     populars: pd.DataFrame
     bests: pd.DataFrame
     n_times: int
@@ -220,17 +227,24 @@ class Objective:
         ]
 
         fit(MODEL, self.X_train[cols], self.y_train)
+
+        draft_params = dict(
+            dropout_type=trial.suggest_categorical(
+                "draft__dropout_type", ["all", "position", "club", "position_club"]
+            ),
+            dropout=trial.suggest_float("draft__dropout", 0.05, 0.95),
+            max_players_per_club=trial.suggest_int("draft__max_players_per_club", 1, 5),
+        )
+
         return score(
             model=MODEL,
             X=self.X_test,
             y=self.y_test,
             cols=cols,
-            max_players_per_club=self.max_players_per_club,
-            dropout=self.dropout,
-            dropout_type=self.dropout_type,
             populars=self.populars,
             bests=self.bests,
             n_times=self.n_times,
+            **draft_params,
         )
 
 
@@ -244,40 +258,18 @@ class DecimalEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def main(
-    n_trials,
-    timeout,
-    max_plyrs_per_club,
-    dropout,
-    dropout_type,
-    n_times,
-    k,
-    tags,
-    notes,
-):
+def main(n_trials, timeout, n_times, k, tags, notes):
     """Main exec."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
     logging.info("Number of Trials: %s", n_trials)
     logging.info("Timeout: %s", timeout)
-    logging.info("Max Players per Club: %s", max_plyrs_per_club)
-    logging.info("Dropout: %s", dropout)
-    logging.info("Dropout Type: %s", dropout_type)
     logging.info("Number of Times: %s", n_times)
     logging.info("NDCG K: %s", k)
     logging.info("Notes: %s", notes)
     logging.info("Tags: %s", tags)
 
     wandb.init(project="palpiteiro-predict", tags=tags, notes=notes)
-    wandb.log(
-        {
-            "n_trials": n_trials,
-            "timeout": timeout,
-            "max_players_per_club": max_plyrs_per_club,
-            "dropout": dropout,
-            "dropout_type": dropout_type,
-            "n_times": n_times,
-        }
-    )
+    wandb.log({"n_trials": n_trials, "timeout": timeout, "n_times": n_times})
 
     # Read data
     with open(QUERY, encoding="utf-8") as file:
@@ -316,7 +308,6 @@ def main(
 
     X_train = X.loc[train_index]
     y_train = y.loc[train_index]
-    q_train = groups.loc[train_index].value_counts(sort=False)
 
     X_valid = X.loc[valid_index]
     y_valid = y.loc[valid_index]
@@ -334,9 +325,6 @@ def main(
         y_train,
         X_valid,
         y_valid,
-        max_players_per_club=max_plyrs_per_club,
-        dropout=dropout,
-        dropout_type=dropout_type,
         populars=populars,
         bests=bests,
         n_times=n_times,
@@ -357,9 +345,10 @@ def main(
     best_params = {
         key: val
         for key, val in study.best_params.items()
-        if not key.startswith("col__")
+        if not key.startswith("col__") and not key.startswith("draft__")
     }
     wandb.log({"params": pd.DataFrame(best_params, index=[0])})
+
     best_cols = {
         key: val for key, val in study.best_params.items() if key.startswith("col__")
     }
@@ -373,6 +362,14 @@ def main(
     )
     selected_cols = [col.replace("col__", "") for col, val in best_cols.items() if val]
 
+    # Apply best params and columns and retrain to score agains test set.
+    draft_params = {
+        key.replace("draft__", ""): val
+        for key, val in study.best_params.items()
+        if key.startswith("draft__")
+    }
+    wandb.log({"draft_params": pd.DataFrame(draft_params, index=[0])})
+
     # Optuna plots
     wandb.log(
         {
@@ -382,11 +379,17 @@ def main(
             "params_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
                 study=study, params=list(best_params.keys())
             ),
+            "draft_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
+                study=study, params=list([f"draft__{key}" for key in draft_params.keys()])
+            ),
             "columns_parallel_coordinate": optuna.visualization.plot_parallel_coordinate(
                 study=study, params=list(best_cols.keys())
             ),
             "params_importance": optuna.visualization.plot_param_importances(
                 study=study, params=list(best_params.keys())
+            ),
+            "draft_importance": optuna.visualization.plot_param_importances(
+                study=study, params=list([f"draft__{key}" for key in draft_params.keys()])
             ),
             "columns_importance": optuna.visualization.plot_param_importances(
                 study=study, params=list(best_cols.keys())
@@ -404,12 +407,10 @@ def main(
         X_test,
         y_test,
         cols=selected_cols,
-        max_players_per_club=max_plyrs_per_club,
-        dropout=dropout,
-        dropout_type=dropout_type,
         populars=populars,
         bests=bests,
         n_times=n_times,
+        **draft_params,
     )
     wandb.log({"testing_scoring": test_score})
     logging.info("testing scoring: %.3f", test_score)
@@ -450,11 +451,7 @@ def main(
         with concurrent.futures.ProcessPoolExecutor() as executor:
             futures = []
             for _ in range(n_times):
-                futures.append(
-                    executor.submit(
-                        draft, rnd, max_plyrs_per_club, dropout, dropout_type
-                    )
-                )
+                futures.append(executor.submit(draft, rnd, **draft_params))
             draft_scores = pd.Series(
                 [fut.result() for fut in concurrent.futures.as_completed(futures)],
                 index=[f"run{i}" for i in range(len(futures))],
@@ -493,9 +490,7 @@ def main(
             real_prizes = [np.nan]
         draft_scores["prize"] = pd.Series(real_prizes)
 
-        log_str = (
-            "%04d-%02d: %03.1f  " "Mode: %03.1f  " "Max %03.1f  " "Prizes %03.1f  "
-        )
+        log_str = "%04d-%02d: %03.1f  Mode: %03.1f  Max %03.1f  Prizes %03.1f"
         logging.info(
             log_str,
             idx[0],
@@ -514,6 +509,8 @@ def main(
         history.drop(columns=["max", "mode", "prize"])
         .subtract(history["mode"], axis=0)
         .divide(history["max"].subtract(history["mode"]), axis=0)
+        .astype("float32")
+        .apply(np.exp)
         .mean()
         .mean()
     )
@@ -539,9 +536,6 @@ def main(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-players-per-club", default=MAX_PLYRS_P_CLUB, type=int)
-    parser.add_argument("--dropout", default=DROPOUT, type=float)
-    parser.add_argument("--dropout-type", default=DROPOUT_TYPE, type=str)
     parser.add_argument("--n-times", default=N_TIMES, type=int)
     parser.add_argument("--n-trials", default=N_TRIALS, type=int)
     parser.add_argument("--timeout", default=TIMEOUT, type=int)
@@ -553,9 +547,6 @@ if __name__ == "__main__":
     main(
         n_trials=args.n_trials,
         timeout=args.timeout,
-        max_plyrs_per_club=args.max_players_per_club,
-        dropout=args.dropout,
-        dropout_type=args.dropout_type,
         n_times=args.n_times,
         k=args.k,
         tags=[t for group in args.tags for t in group],
