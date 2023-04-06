@@ -11,8 +11,8 @@ on:
       - requirements-train.txt
       - .github/workflows/train.yml
 
-  # schedule:
-  #   - cron:  '0 3 * * 2'
+  schedule:
+    - cron:  '0 3 * * 2'
 
 jobs:
   train:
