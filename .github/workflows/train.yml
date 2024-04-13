@@ -44,7 +44,7 @@ jobs:
       - name: Train
         run: |
           python train.py \
-          --n-trials 250 \
+          --n-trials 10 \
           --n-times 50 \
           -t 'train.yml'
         env:
